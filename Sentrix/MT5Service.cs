@@ -222,7 +222,7 @@ namespace Sentrix
                     pipe = new NamedPipeServerStream(
                         PipeName,
                         PipeDirection.InOut,
-                        1,                              // max 1 EA instance
+                        NamedPipeServerStream.MaxAllowedServerInstances, 
                         PipeTransmissionMode.Byte,
                         PipeOptions.Asynchronous);
                     _pipe = pipe;   // for finally block dispose
