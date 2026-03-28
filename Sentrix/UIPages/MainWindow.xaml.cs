@@ -550,8 +550,8 @@ namespace Sentrix
 
                     string exePath = MT5AutoAttachService.GetMT5ExePath(validProcess);
                     _mT5AutoAttachService.EnsureEAAttached(validProcess, exePath);
-                    if (!_mt5Service.IsConnected)
-                        _mt5Service.Restart();
+                    //if (!_mt5Service.IsConnected)
+                    //    _mt5Service.Restart();
 
                     Dispatcher.Invoke(async () =>
                     {

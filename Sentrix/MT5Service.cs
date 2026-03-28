@@ -57,14 +57,16 @@ namespace Sentrix
         [JsonPropertyName("Positions")] public List<MT5Position> Positions { get; set; }
     }
 
-    public class MT5Service 
+    public class MT5Service
     {
-      
+
         public MT5Service() { }
 
-        private const string PipeName = "SentriXBridge";
+        private const string PipeName = "SentrixDataPipe";
 
         private NamedPipeServerStream _pipe;
+        private NamedPipeClientStream _cmdpipe;
+        private readonly object _cmdlock = new();
         private CancellationTokenSource _cts;
         private Task _readerTask;
         private Task _cmdTask;
@@ -79,10 +81,10 @@ namespace Sentrix
 
         /// <summary>Raised on the thread-pool whenever a fresh payload arrives.</summary>
         public event Action<MT5AccountInfo, List<MT5Position>> OnDataReceived;
-        private const string CmdPipeName = "SentriXBridgeCmd";
+        private const string CmdPipeName = "SentrixCmdPipe";
         private NamedPipeServerStream _cmdPipe;
         private readonly object _cmdLock = new();
-        
+
 
         // ── Lifecycle ─────────────────────────────────────────────────
 
@@ -99,75 +101,42 @@ namespace Sentrix
 
         private async Task CommandLoop(CancellationToken token)
         {
-            Debug.WriteLine($"MT5Service: CommandLoop started at {DateTime.Now:HH:mm:ss}");
+            Debug.WriteLine($"MT5Service: CommandLoop started.");
             while (!token.IsCancellationRequested)
             {
                 NamedPipeServerStream pipe = null;
-                Debug.WriteLine($"MT5Service: cmd pipe state — IsConnected={pipe?.IsConnected}, _cmdPipe null={_cmdPipe == null}");
                 try
                 {
-                    pipe = new NamedPipeServerStream(CmdPipeName, PipeDirection.Out, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.WriteThrough);
-                    Debug.WriteLine($"MT5Service: cmd pipe server created at {DateTime.Now:HH:mm:ss}");
+                    pipe = new NamedPipeServerStream(
+                        CmdPipeName,
+                        PipeDirection.InOut,
+                        NamedPipeServerStream.MaxAllowedServerInstances,
+                        PipeTransmissionMode.Byte,
+                        PipeOptions.Asynchronous);
+
                     Debug.WriteLine("MT5Service: cmd pipe ready, waiting for EA...");
-
                     await pipe.WaitForConnectionAsync(token);
-                    Debug.WriteLine($"MT5Service: cmd pipe EA connected at {DateTime.Now:HH:mm:ss}");
+                    Debug.WriteLine($"MT5Service: cmd pipe EA connected.");
 
-                    lock (_cmdLock)
-                    {
-                        _cmdPipe = pipe;
-                    }
-                    Debug.WriteLine("MT5Service: cmd pipe connected.");
+                    lock (_cmdLock) { _cmdPipe = pipe; }
 
+                    // Keep the pipe alive quietly. 
                     while (pipe.IsConnected && !token.IsCancellationRequested)
                     {
-                        await Task.Delay(200, token).ContinueWith(_ => { });
-
-                        try
-                        {
-                            pipe.Write(Array.Empty<byte>(),0,0);
-
-                        }
-                        catch (IOException)
-                        {
-
-                            Debug.WriteLine("MT5Service: cmd pipe broken, reconnecting...");
-                            break;
-                        }
-
+                        await Task.Delay(1000, token);
                     }
                 }
-                catch (OperationCanceledException) when (token.IsCancellationRequested)
-                {
-                    break;
-                }
-                catch (OperationCanceledException) { }
-                catch (IOException ex)
-                {
-                    Debug.WriteLine($"MT5Service: cmd pipe IO error — {ex.Message}");
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"MT5Service: cmd pipe error — {ex.Message}");
-                }
+                catch (OperationCanceledException) { break; }
+                catch (Exception ex) { Debug.WriteLine($"MT5Service: cmd pipe error — {ex.Message}"); }
                 finally
                 {
-                    lock (_cmdLock)
-                    {
-                        _cmdPipe = null;
-                        try
-                        {
-                            pipe?.Dispose();
-                        }
-                        catch 
-                        {
-                        }
-                    }
+                    lock (_cmdLock) { if (_cmdPipe == pipe) _cmdPipe = null; }
+                    try { pipe?.Disconnect(); } catch { }
+                    try { pipe?.Dispose(); } catch { }
                     Debug.WriteLine("MT5Service: cmd pipe disposed, recreating...");
                 }
-                if(!token.IsCancellationRequested)
-                    await Task.Delay(500, token).ContinueWith(_ => { });
 
+                if (!token.IsCancellationRequested) await Task.Delay(500, token);
             }
         }
 
@@ -218,91 +187,56 @@ namespace Sentrix
                 NamedPipeServerStream pipe = null;
                 try
                 {
-                    // Create a new server-side pipe and wait for the EA to connect
                     pipe = new NamedPipeServerStream(
                         PipeName,
                         PipeDirection.InOut,
-                        NamedPipeServerStream.MaxAllowedServerInstances, 
+                        NamedPipeServerStream.MaxAllowedServerInstances,
                         PipeTransmissionMode.Byte,
                         PipeOptions.Asynchronous);
-                    _pipe = pipe;   // for finally block dispose
-                    Debug.WriteLine("MT5Service: waiting for EA to connect...");
+
+                    _pipe = pipe;
+
+                    Debug.WriteLine("MT5Service: data pipe waiting for EA to connect...");
                     await pipe.WaitForConnectionAsync(ct);
 
                     IsConnected = true;
-                    Debug.WriteLine("MT5Service: EA connected.");
+                    Debug.WriteLine("MT5Service: data pipe EA connected.");
 
                     using var reader = new BinaryReader(pipe, Encoding.UTF8, leaveOpen: true);
 
                     while (pipe.IsConnected && !ct.IsCancellationRequested)
                     {
-                        int length=0;
                         try
                         {
+                            int length = reader.ReadInt32();
 
-                             length = reader.ReadInt32();
-                            if (length <= 0 || length > 1_048_576)   // sanity: max 1 MB
-                            {
-                                Debug.WriteLine($"MT5Service: bad packet length {length}, resetting.");
-                                break;
-                            }
+                            if (length <= 0 || length > 1_048_576) break;
 
                             byte[] buf = reader.ReadBytes(length);
-                            if (buf.Length != length) 
-                            { 
-                                Debug.WriteLine("MT5Service: incomplete packet.");
-                                break;
-                            };
+                            if (buf.Length != length) break;
 
                             string json = Encoding.UTF8.GetString(buf);
                             ParseAndStore(json);
                         }
-                        catch (EndOfStreamException)
-                        {
-
-                            Debug.WriteLine("MT5Service: pipe EOF while reading length — EA disconnected.");
-                        }
-                        // EA sends: [int32 length][utf-8 json string]
-
+                        catch (EndOfStreamException) { break; }
                     }
                 }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    Debug.WriteLine("MT5Service: shutdown requested, exiting loop.");
-                    break;
-                }
-                catch (OperationCanceledException)
-                {
-                    Debug.WriteLine("MT5Service: connection dropped, will reconnect...");
-                }
-                catch (EndOfStreamException)
-                {
-                    Debug.WriteLine("MT5Service: pipe EOF — EA disconnected.");
-                }
-                catch (IOException ex)
-                {
-                    Debug.WriteLine($"MT5Service: IO error — {ex.Message}");
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"MT5Service: unexpected error — {ex.Message}");
-                }
+                catch (OperationCanceledException) { break; }
+                catch (Exception ex) { Debug.WriteLine($"MT5Service: data pipe error — {ex.Message}"); }
                 finally
                 {
                     IsConnected = false;
-                    _pipe = null;
+                    if (_pipe == pipe) _pipe = null;
+
+                    // <--- CRITICAL FIX: Disconnect ghost handles
+                    try { pipe?.Disconnect(); } catch { }
                     try { pipe?.Dispose(); } catch { }
-                    Debug.WriteLine($"MT5Service: pipe disposed at {DateTime.Now:HH:mm:ss}, recreating in 500ms...");
+
+                    Debug.WriteLine($"MT5Service: data pipe disposed, recreating in 500ms...");
                 }
 
-                if (!ct.IsCancellationRequested)
-                {
-                    // Wait 2 s before recreating the pipe (MT5 may still be launching)
-                    await Task.Delay(500, ct).ContinueWith(_ => { });
-                }
+                if (!ct.IsCancellationRequested) await Task.Delay(500, ct);
             }
-
-            Debug.WriteLine("MT5Service: reader loop exited.");
         }
 
         // ── Command sender (close positions) ─────────────────────────
@@ -311,7 +245,7 @@ namespace Sentrix
         /// Sends a JSON command to the EA through the same pipe.
         /// Used by CloseAllPositions to request the EA close a ticket.
         /// </summary>
-       
+
         public void SendCommand(string jsonCommand)
         {
             NamedPipeServerStream cmdPipe;
@@ -336,14 +270,14 @@ namespace Sentrix
                 // using var writer = new BinaryWriter(cmdPipe, Encoding.UTF8, leaveOpen: true);
                 //writer.Write(data.Length);
                 //writer.Write(data);
-                byte[] packet = new byte[4+ data.Length];
+                byte[] packet = new byte[4 + data.Length];
                 Buffer.BlockCopy(lengthBytes, 0, packet, 0, 4);
                 Buffer.BlockCopy(data, 0, packet, 4, data.Length);
 
-                lock(_cmdLock)
+                lock (_cmdLock)
                 {
-                   cmdPipe.Write(packet, 0, packet.Length);
-                   cmdPipe.Flush();
+                    cmdPipe.Write(packet, 0, packet.Length);
+                    cmdPipe.Flush();
                 }
 
                 //cmdPipe.Write(lengthBytes, 0, 4);
@@ -384,25 +318,38 @@ namespace Sentrix
             }
         }
 
+        //public void Restart()
+        //{
+        //    _cts?.Cancel();
+        //    try
+        //    {
+        //        _pipe?.Dispose();
+        //    }
+        //    catch
+        //    {
+        //    }
+        //    try { _cmdPipe?.Dispose(); } catch { }
+        //    _pipe = null;
+        //    _cmdPipe = null;
+        //    IsConnected = false;
+
+        //    _cts = new CancellationTokenSource();
+        //    _cmdTask = Task.Run(() => CommandLoop(_cts.Token));
+        //    _readerTask = Task.Run(() => ReaderLoop(_cts.Token));
+        //    Debug.WriteLine("MT5Service: Restarted reader loop.");
+        //}
+
         public void Restart()
         {
-            _cts?.Cancel();
-            try
-            {
-                _pipe?.Dispose();
-            }
-            catch
-            {
-            }
-            try { _cmdPipe?.Dispose(); } catch { }
+            Stop();
             _pipe = null;
             _cmdPipe = null;
-            IsConnected = false;
 
             _cts = new CancellationTokenSource();
             _cmdTask = Task.Run(() => CommandLoop(_cts.Token));
             _readerTask = Task.Run(() => ReaderLoop(_cts.Token));
-            Debug.WriteLine("MT5Service: Restarted reader loop.");
+                Debug.WriteLine("MT5Service: Restarted reader loop.");
+
         }
     }
 }
