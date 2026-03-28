@@ -462,59 +462,56 @@ FontFamily="Segoe UI">
 
                                         <!-- Session Name -->
                                         <DataGridTemplateColumn Header="Session Name" Width="*">
-                                                <DataGridTemplateColumn.CellTemplate>
+                                            <DataGridTemplateColumn.CellTemplate>
                                                 <DataTemplate>
                                                     <TextBlock Text="{Binding SessionName}"
-                                                            Foreground="#E8EAF6"
-                                                            VerticalAlignment="Center" Padding="8,0"/>
+                       Foreground="#E8EAF6"
+                       VerticalAlignment="Center" Padding="8,0"/>
                                                 </DataTemplate>
                                             </DataGridTemplateColumn.CellTemplate>
                                             <DataGridTemplateColumn.CellEditingTemplate>
                                                 <DataTemplate>
-                                                    <ComboBox ItemsSource="{Binding TimeSlotsList, RelativeSource={RelativeSource AncestorType=Window}}"
-                  SelectedItem="{Binding StartTime, UpdateSourceTrigger=PropertyChanged}"
-                  Style="{StaticResource TimePickerStyle}"
-                  IsDropDownOpen="True"/>
+                                                    <TextBox Text="{Binding SessionName, UpdateSourceTrigger=PropertyChanged}"
+                     Style="{StaticResource InputStyle}" Height="30"/>
                                                 </DataTemplate>
                                             </DataGridTemplateColumn.CellEditingTemplate>
                                         </DataGridTemplateColumn>
 
-                                        <!-- Start Time ComboBox -->
                                         <DataGridTemplateColumn Header="Start" Width="130">
                                             <DataGridTemplateColumn.CellTemplate>
                                                 <DataTemplate>
                                                     <TextBlock Text="{Binding StartTime}"
-                    Foreground="#3DD68C"
-                    VerticalAlignment="Center" Padding="8,0"/>
+                       Foreground="#3DD68C"
+                       VerticalAlignment="Center" Padding="8,0"/>
                                                 </DataTemplate>
                                             </DataGridTemplateColumn.CellTemplate>
                                             <DataGridTemplateColumn.CellEditingTemplate>
                                                 <DataTemplate>
                                                     <ComboBox ItemsSource="{Binding TimeSlotsList, RelativeSource={RelativeSource AncestorType=Window}}"
-                  SelectedItem="{Binding EndTime, UpdateSourceTrigger=PropertyChanged}"
-                  Style="{StaticResource TimePickerStyle}"
-                  IsDropDownOpen="True"/>
-                                                </DataTemplate>
-                                            </DataGridTemplateColumn.CellEditingTemplate>
-                                        </DataGridTemplateColumn>
-                                        <!-- End Time ComboBox -->
-                                        <DataGridTemplateColumn Header="End" Width="130">
-                                            <DataGridTemplateColumn.CellTemplate>
-                                                <DataTemplate>
-                                                    <TextBlock Text="{Binding EndTime}"
-                    Foreground="#FF8C42"
-                    VerticalAlignment="Center" Padding="8,0"/>
-                                                </DataTemplate>
-                                            </DataGridTemplateColumn.CellTemplate>
-                                            <DataGridTemplateColumn.CellEditingTemplate>
-                                                <DataTemplate>
-                                                    <ComboBox ItemsSource="{Binding TimeSlotsList, RelativeSource={RelativeSource AncestorType=Window}}"
-                    SelectedItem="{Binding EndTime, UpdateSourceTrigger=PropertyChanged}"
-                    Style="{StaticResource TimePickerStyle}"/>
+                      SelectedItem="{Binding StartTime, UpdateSourceTrigger=PropertyChanged}"
+                      Style="{StaticResource TimePickerStyle}"
+                      IsDropDownOpen="True"/>
                                                 </DataTemplate>
                                             </DataGridTemplateColumn.CellEditingTemplate>
                                         </DataGridTemplateColumn>
 
+                                        <DataGridTemplateColumn Header="End" Width="130">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding EndTime}"
+                       Foreground="#FF8C42"
+                       VerticalAlignment="Center" Padding="8,0"/>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                            <DataGridTemplateColumn.CellEditingTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox ItemsSource="{Binding TimeSlotsList, RelativeSource={RelativeSource AncestorType=Window}}"
+                      SelectedItem="{Binding EndTime, UpdateSourceTrigger=PropertyChanged}"
+                      Style="{StaticResource TimePickerStyle}"
+                      IsDropDownOpen="True"/>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellEditingTemplate>
+                                        </DataGridTemplateColumn>
                                         <!-- Delete -->
                                         <DataGridTemplateColumn Header="" Width="40">
                                             <DataGridTemplateColumn.CellTemplate>
