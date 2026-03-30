@@ -8,6 +8,7 @@
     <UseWPF>true</UseWPF>
 	<ApplicationIcon>ChatGPT Image Dec 22, 2025, 04_42_04 PM.ico</ApplicationIcon>
 	<UseWindowsForms>true</UseWindowsForms>
+	<Platforms>AnyCPU;x64</Platforms>
   </PropertyGroup>
 	<ItemGroup>
 		<EmbeddedResource Include="Resources\SentriXBridge.ex5" />
