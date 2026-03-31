@@ -70,7 +70,7 @@ namespace Sentrix.Repositories
             try
             {
                 if (id == -1) return null;
-                var userRole = _conn.UserRoles.Find(id);
+                var userRole = _conn.UserRoles.FirstOrDefault(ur => ur.UserId == id);
                 var roleName = userRole != null ? userRole.RoleId == 1 ? "Normal User" : "Admin User" : null;
                 return roleName;
             }

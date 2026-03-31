@@ -173,7 +173,7 @@ namespace Sentrix
                               "Please run Sentrix as Administrator once to complete setup."
                 };
             }
-            
+
             catch (Exception ex)
             {
                 return new InstallResult
@@ -208,35 +208,32 @@ namespace Sentrix
         {
             try
             {
-                // MT5 config folder
                 string configFolder = Path.Combine(mt5DataPath, "config");
                 Directory.CreateDirectory(configFolder);
 
-                // experts.ini controls EA auto-load behaviour
                 string iniPath = Path.Combine(configFolder, "experts.ini");
 
-                // Read existing if present so we don't overwrite other settings
+                // FIXED: Read as Unicode
                 string existing = File.Exists(iniPath)
-                    ? File.ReadAllText(iniPath)
+                    ? File.ReadAllText(iniPath, Encoding.Unicode)
                     : "";
 
-                // Only write if our entry isn't already there
-                if (!existing.Contains("SentriXBridge"))
+                if (!existing.Contains("AllowLiveTrading=1"))
                 {
+                    // FIXED: Append as Unicode
                     File.AppendAllText(iniPath,
                         "\r\n[Experts]\r\n" +
                         "AllowLiveTrading=1\r\n" +
                         "AllowDllImport=0\r\n" +
                         "Enabled=1\r\n" +
-                        "Account=0\r\n");
+                        "Account=0\r\n", Encoding.Unicode);
                 }
 
-                // Also write a chart profile that auto-loads the EA
                 WriteChartProfile(mt5DataPath);
+                EnableGlobalAlgoTrading(mt5DataPath);
             }
             catch (Exception ex)
             {
-                // Non-fatal — EA can still be attached manually
                 Debug.WriteLine($"WriteAutoLoadConfig warning: {ex.Message}");
             }
         }
@@ -277,20 +274,91 @@ namespace Sentrix
         //}
 
         // ── Write a default chart profile with EA pre-attached ───────────
+        //private void WriteChartProfile(string mt5DataPath)
+        //{
+        //    try
+        //    {
+        //        // 1. Discover the user's ACTUALLY active profile
+        //        string lastProfileFile = Path.Combine(mt5DataPath, "profiles", "last_profile.ini");
+        //        string activeProfile = "default"; // Fallback
+
+        //        if (File.Exists(lastProfileFile))
+        //        {
+        //            // MT5 .ini files are written in UTF-16 LE (Unicode)
+        //            byte[] bytes = File.ReadAllBytes(lastProfileFile);
+        //            string profileName = Encoding.Unicode.GetString(bytes).Replace("\0", "").Trim();
+
+        //            if (!string.IsNullOrWhiteSpace(profileName))
+        //            {
+        //                activeProfile = profileName;
+        //            }
+        //        }
+
+        //        string profilesFolder = Path.Combine(mt5DataPath, "profiles", activeProfile);
+        //        Directory.CreateDirectory(profilesFolder);
+
+        //        // 2. Find their first existing chart, or create one if the folder is empty
+        //        var chartFiles = Directory.GetFiles(profilesFolder, "*.chr");
+        //        string targetChart = chartFiles.Length > 0
+        //            ? chartFiles[0]
+        //            : Path.Combine(profilesFolder, "chart01.chr");
+
+        //        if (!File.Exists(targetChart))
+        //        {
+        //            // No charts exist in this profile, create a fresh one with the EA
+        //            File.WriteAllText(targetChart,
+        //                "<chart>\r\n" +
+        //                "symbol=EURUSD\r\n" +
+        //                "period=1\r\n" +        // M1
+        //                "<expert>\r\n" +
+        //                "name=SentriXBridge\r\n" +
+        //                "window=0\r\n" +
+        //                "login=0\r\n" +
+        //                "symbol=EURUSD\r\n" +
+        //                "</expert>\r\n" +
+        //                "</chart>\r\n");
+
+        //            Debug.WriteLine($"Created new chart with EA in profile: {activeProfile}");
+        //            return;
+        //        }
+
+        //        // 3. Inject the EA into their existing chart (if not already there)
+        //        string chartContent = File.ReadAllText(targetChart);
+        //        if (!chartContent.Contains("SentriXBridge"))
+        //        {
+        //            string injection =
+        //                "<expert>\r\n" +
+        //                "name=SentriXBridge\r\n" +
+        //                "window=0\r\n" +
+        //                "login=0\r\n" +
+        //                "symbol=EURUSD\r\n" +
+        //                "</expert>\r\n";
+
+        //            // Safely inject right before the closing </chart> tag
+        //            chartContent = chartContent.Replace("</chart>", injection + "</chart>");
+        //            File.WriteAllText(targetChart, chartContent);
+
+        //            Debug.WriteLine($"Injected EA into existing chart in profile: {activeProfile}");
+        //        }
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        Debug.WriteLine($"WriteChartProfile warning: {ex.Message}");
+        //    }
+        //}
+
+
         private void WriteChartProfile(string mt5DataPath)
         {
             try
             {
-                // 1. Discover the user's ACTUALLY active profile
                 string lastProfileFile = Path.Combine(mt5DataPath, "profiles", "last_profile.ini");
-                string activeProfile = "default"; // Fallback
+                string activeProfile = "default";
 
                 if (File.Exists(lastProfileFile))
                 {
-                    // MT5 .ini files are written in UTF-16 LE (Unicode)
-                    byte[] bytes = File.ReadAllBytes(lastProfileFile);
-                    string profileName = Encoding.Unicode.GetString(bytes).Replace("\0", "").Trim();
-
+                    // FIXED: Read last_profile.ini as Unicode
+                    string profileName = File.ReadAllText(lastProfileFile, Encoding.Unicode).Replace("\0", "").Trim();
                     if (!string.IsNullOrWhiteSpace(profileName))
                     {
                         activeProfile = profileName;
@@ -300,53 +368,108 @@ namespace Sentrix
                 string profilesFolder = Path.Combine(mt5DataPath, "profiles", activeProfile);
                 Directory.CreateDirectory(profilesFolder);
 
-                // 2. Find their first existing chart, or create one if the folder is empty
                 var chartFiles = Directory.GetFiles(profilesFolder, "*.chr");
                 string targetChart = chartFiles.Length > 0
                     ? chartFiles[0]
                     : Path.Combine(profilesFolder, "chart01.chr");
 
+                string injection =
+                    "<expert>\r\n" +
+                    "name=SentriXBridge\r\n" +
+                    "path=Experts\\SentriXBridge.ex5\r\n" +
+                    "expertmode=5\r\n" +
+                    "window=0\r\n" +
+                    "</expert>\r\n";
+
                 if (!File.Exists(targetChart))
                 {
-                    // No charts exist in this profile, create a fresh one with the EA
                     File.WriteAllText(targetChart,
                         "<chart>\r\n" +
                         "symbol=EURUSD\r\n" +
-                        "period=1\r\n" +        // M1
-                        "<expert>\r\n" +
-                        "name=SentriXBridge\r\n" +
-                        "window=0\r\n" +
-                        "login=0\r\n" +
-                        "symbol=EURUSD\r\n" +
-                        "</expert>\r\n" +
-                        "</chart>\r\n");
+                        "period=1\r\n" +
+                        injection +
+                        "</chart>\r\n", Encoding.Unicode);
 
                     Debug.WriteLine($"Created new chart with EA in profile: {activeProfile}");
                     return;
                 }
 
-                // 3. Inject the EA into their existing chart (if not already there)
-                string chartContent = File.ReadAllText(targetChart);
-                if (!chartContent.Contains("SentriXBridge"))
+                string chartContent = File.ReadAllText(targetChart, Encoding.Unicode);
+
+                // FIXED: If the EA is already in the file, we must REMOVE the old block first
+                // so we can forcefully inject the new one with expertmode=5
+                if (chartContent.Contains("SentriXBridge"))
                 {
-                    string injection =
-                        "<expert>\r\n" +
-                        "name=SentriXBridge\r\n" +
-                        "window=0\r\n" +
-                        "login=0\r\n" +
-                        "symbol=EURUSD\r\n" +
-                        "</expert>\r\n";
-
-                    // Safely inject right before the closing </chart> tag
-                    chartContent = chartContent.Replace("</chart>", injection + "</chart>");
-                    File.WriteAllText(targetChart, chartContent);
-
-                    Debug.WriteLine($"Injected EA into existing chart in profile: {activeProfile}");
+                    int startIndex = chartContent.IndexOf("<expert>");
+                    while (startIndex != -1)
+                    {
+                        int endIndex = chartContent.IndexOf("</expert>", startIndex);
+                        if (endIndex != -1)
+                        {
+                            string block = chartContent.Substring(startIndex, (endIndex + 9) - startIndex);
+                            if (block.Contains("SentriXBridge"))
+                            {
+                                chartContent = chartContent.Replace(block, ""); // Erase old block
+                                break;
+                            }
+                        }
+                        startIndex = chartContent.IndexOf("<expert>", startIndex + 1);
+                    }
                 }
+
+                // Inject the fresh block right before the end of the chart
+                chartContent = chartContent.Replace("</chart>", injection + "</chart>");
+                File.WriteAllText(targetChart, chartContent, Encoding.Unicode);
+                Debug.WriteLine($"Injected EA with expertmode=5 into profile: {activeProfile}");
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"WriteChartProfile warning: {ex.Message}");
+            }
+        }
+
+        private void EnableGlobalAlgoTrading(string mt5DataPath)
+        {
+            try
+            {
+                string terminalIniPath = Path.Combine(mt5DataPath, "config", "terminal.ini");
+                if (!File.Exists(terminalIniPath)) return;
+
+                // FIXED: terminal.ini MUST be read and written as Unicode
+                string[] lines = File.ReadAllLines(terminalIniPath, Encoding.Unicode);
+                bool expertsSectionFound = false;
+                bool fileChanged = false;
+
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    if (lines[i].Trim() == "[Experts]")
+                    {
+                        expertsSectionFound = true;
+                    }
+                    else if (expertsSectionFound && lines[i].StartsWith("Enabled="))
+                    {
+                        if (lines[i] != "Enabled=1")
+                        {
+                            lines[i] = "Enabled=1"; // Force Algo Trading ON
+                            fileChanged = true;
+                        }
+                        break;
+                    }
+                    else if (expertsSectionFound && lines[i].StartsWith("["))
+                    {
+                        break;
+                    }
+                }
+
+                if (fileChanged)
+                {
+                    File.WriteAllLines(terminalIniPath, lines, Encoding.Unicode);
+                    Debug.WriteLine("Global Algo Trading enabled in terminal.ini");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Failed to enable Global Algo Trading: {ex.Message}");
             }
         }
     }

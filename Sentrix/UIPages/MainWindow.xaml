@@ -140,6 +140,7 @@
                     </Border>
                 </Button>
                 <Button x:Name="AdminPanelBtn"
+                        Visibility="Collapsed"
                  Grid.Column="7"
                  Width="40"
                  Height="34"
