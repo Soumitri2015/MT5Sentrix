@@ -23,7 +23,7 @@ namespace Sentrix
             var services = new ServiceCollection();
             var connectionString =
                                 ConfigurationManager.ConnectionStrings["MyDbConnection"].ConnectionString;
-            services.AddDbContext<ApplicationDBContext>(options =>
+            services.AddDbContextFactory<ApplicationDBContext>(options =>
             options.UseSqlServer(connectionString));
             services.AddScoped<UserRepository>();
             services.AddScoped<ConfigRepository>();

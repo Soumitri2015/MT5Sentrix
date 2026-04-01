@@ -3,6 +3,7 @@ using Sentrix.EntityModel;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Drawing;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -12,11 +13,13 @@ namespace Sentrix.Repositories
     public class PositionRepository
     {
 
-        private readonly ApplicationDBContext _context;
-        
-        public PositionRepository(ApplicationDBContext context)
+        //private readonly ApplicationDBContext _context;
+
+        private readonly IDbContextFactory<ApplicationDBContext> _contextFactory;
+
+        public PositionRepository(IDbContextFactory<ApplicationDBContext> context)
         {
-            _context = context;
+            _contextFactory = context;
            
         }
 
@@ -24,6 +27,7 @@ namespace Sentrix.Repositories
         {
             try
             {
+                await using var _context = await _contextFactory.CreateDbContextAsync();
                 bool exists = await _context.Positions.AnyAsync(p =>
                     p.UserId == position.UserId &&
                     p.Symbol == position.Symbol &&
@@ -48,6 +52,7 @@ namespace Sentrix.Repositories
         {
             try
             {
+                await using var _context = await _contextFactory.CreateDbContextAsync();
                 var position = await _context.Positions.FirstOrDefaultAsync(p =>
                     p.UserId == userId &&
                     p.Symbol == symbol &&
@@ -72,7 +77,7 @@ namespace Sentrix.Repositories
         {
             try
             {
-
+                await using var _context = await _contextFactory.CreateDbContextAsync();
                 DateTime today = DateTime.UtcNow.Date;
                 return await _context.Positions
                     .Where(p => p.UserId == userId && p.CreatedUtc.Date == today)
@@ -90,6 +95,7 @@ namespace Sentrix.Repositories
         {
             try
             {
+                await using var _context = await _contextFactory.CreateDbContextAsync();
                 DateTime today = DateTime.UtcNow.Date;
 
                 return await _context.Positions
@@ -116,6 +122,7 @@ namespace Sentrix.Repositories
         {
             try
             {
+                await using var _context = await _contextFactory.CreateDbContextAsync();
 
                 TimeOnly eventTime = TimeOnly.FromDateTime(DateTime.Now);
                 DateTime tradeDate = DateTime.Today;
@@ -150,6 +157,29 @@ namespace Sentrix.Repositories
 
                 Debug.WriteLine($"SaveEventAsync exception: {ex.Message}");
             }
+        }
+
+        public async Task<List<Sentrix.Models.EventLog>> GetEventsByUser(int userId)
+        {
+            try
+            {
+                    await using var _context = await _contextFactory.CreateDbContextAsync();
+                var events = await _context.TradeEvents.Where(e => e.UserId == userId).OrderByDescending(e => e.TradeDate).ThenByDescending(e => e.EventTime)
+                .Select(e => new Sentrix.Models.EventLog
+                {
+                    Timestamp = e.EventTime.ToString("HH:mm"),
+                    Message = e.Message,
+                    DisplayDateTime = e.DisplayDateTime.ToString("yyyy-MM-dd HH:mm:ss")
+                })
+                .ToListAsync();
+                return events;
+            }
+            catch (Exception)
+            {
+
+                throw;
+            }
+            
         }
     }
 }

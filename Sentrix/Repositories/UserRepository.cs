@@ -1,4 +1,6 @@
-﻿using Sentrix.EntityModel;
+﻿using Microsoft.EntityFrameworkCore;
+using Sentrix.EntityModel;
+//using Sentrix.Models;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -98,6 +100,19 @@ namespace Sentrix.Repositories
 
                 throw;
             }
+        }
+
+        public async Task<List<Sentrix.Models.EventLog>>GetEventsByUser(int userId)
+        {
+            var events = await _conn.TradeEvents.Where(e=> e.UserId == userId).OrderByDescending(e=> e.TradeDate).ThenByDescending(e => e.EventTime)
+                .Select(e => new Sentrix.Models.EventLog
+                {
+                    Timestamp = e.EventTime.ToString("HH:mm"),
+                    Message = e.Message,
+                    DisplayDateTime = e.DisplayDateTime.ToString("yyyy-MM-dd HH:mm:ss")
+                })
+                .ToListAsync();
+            return events;
         }
     }
 }

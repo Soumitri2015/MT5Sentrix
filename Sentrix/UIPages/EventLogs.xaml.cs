@@ -21,7 +21,7 @@ namespace Sentrix.UIPages
     /// </summary>
     public partial class EventLogs : Window
     {
-        public EventLogs(List<EventLog> events)
+        public EventLogs(List<EventDateGroup> events)
         {
             InitializeComponent();
             EventsList.ItemsSource = events;

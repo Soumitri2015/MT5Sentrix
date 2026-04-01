@@ -12,4 +12,16 @@ namespace Sentrix.Models
         public string Message { get; set; }
         public string DisplayDateTime { get; set; }
     }
+
+    public class EventHourGroup
+    {
+        public string Hour { get; set; }
+        public List<EventLog> Events { get; set; }
+    }
+
+    public class EventDateGroup
+    {
+        public string Date { get; set; }
+        public List<EventHourGroup> Hours { get; set; }
+    }
 }

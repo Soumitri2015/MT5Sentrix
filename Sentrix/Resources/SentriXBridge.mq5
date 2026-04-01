@@ -124,6 +124,7 @@ void ReadIncomingCommand()
    }
 }
 
+
 //+------------------------------------------------------------------+
 void ClosePositionByTicket(ulong ticket)
 {
@@ -157,8 +158,22 @@ void ClosePositionByTicket(ulong ticket)
    req.deviation = 20;
    req.comment   = "Sentrix close";
    
-   // Set the filling mode. IOC (Immediate or Cancel) is standard for most modern brokers
-   req.type_filling = ORDER_FILLING_IOC; 
+   // --- FIX: Dynamic Filling Mode ---
+   uint filling = (uint)SymbolInfoInteger(symbol, SYMBOL_FILLING_MODE);
+   
+   if((filling & SYMBOL_FILLING_FOK) != 0) 
+   {
+      req.type_filling = ORDER_FILLING_FOK;
+   }
+   else if((filling & SYMBOL_FILLING_IOC) != 0) 
+   {
+      req.type_filling = ORDER_FILLING_IOC;
+   }
+   else 
+   {
+      req.type_filling = ORDER_FILLING_RETURN;
+   }
+   // ---------------------------------
 
    if(OrderSend(req, res))
       Print("SentriXBridge: closed ticket ", ticket, " retcode=", res.retcode);

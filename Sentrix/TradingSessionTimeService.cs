@@ -89,7 +89,7 @@ namespace Sentrix
 
             var normalizedSessionName = AlertService.NormaliZeSession(sessionName);
 
-            if (!_appConfigData.TradingSessions.TryGetValue(sessionName.Replace(" ",""), out var windows))
+            if (!_appConfigData.TradingSessions.TryGetValue(sessionName.Replace(" ","").ToLower(), out var windows))
                 return false;   
                 if (windows == null || windows.Count == 0)
                    return false;

@@ -423,19 +423,20 @@ namespace Sentrix
             }
         }
 
-        private void EventLogBtn_Click(object sender, RoutedEventArgs e)
+        private async void EventLogBtn_Click(object sender, RoutedEventArgs e)
         {
-            List<Models.EventLog> events = ReadTodayEventLog();
+            var timeLine = await GetTimelineEvents(userId);
 
-            EventLogs popup = new EventLogs(events)
+            EventLogs popup = new  EventLogs(timeLine)
             {
                 Owner = this
+
             };
 
             popup.ShowDialog();
         }
 
-        List<EventLog> ReadTodayEventLog()
+        async Task< List<EventLog>> ReadTodayEventLog()
         {
             try
             {
@@ -462,6 +463,22 @@ namespace Sentrix
             {
                 return new List<EventLog>();
             }
+        }
+
+        public async Task<List<EventDateGroup>> GetTimelineEvents(int userId)
+        {
+            var flatEvents = await _positionRepo.GetEventsByUser(userId);
+
+            var grouped = flatEvents.GroupBy(e=> e.DisplayDateTime).OrderByDescending(g=> g.Key).Select(dateGroup=> new EventDateGroup
+            {
+                Date = dateGroup.Key,
+                Hours = dateGroup.GroupBy(e => e.Timestamp.Substring(0,2)).OrderByDescending(h=> h.Key).Select(hourGroup => new EventHourGroup
+                {
+                    Hour = hourGroup.Key,
+                    Events = hourGroup.ToList()
+                }).ToList()
+            }).ToList();
+            return grouped;
         }
 
 
@@ -985,7 +1002,7 @@ namespace Sentrix
 
                 if (worstPosition == null) return;
 
-                _mt5Service.SendCommand($"{{\"CMD\":\"CLOSE\",\"Ticket\":{worstPosition.Ticket}}}");
+                 _mt5Service.SendCommand($"{{\"CMD\":\"CLOSE\",\"Ticket\":{worstPosition.Ticket}}}");
 
                 string positionRow = $"{worstPosition.Symbol}|{worstPosition.Direction}|{worstPosition.Lots:F2}|{worstPosition.EntryPrice:F5}|{worstPosition.StopLoss:F5}|{worstPosition.TakeProfit:F5}|{worstPosition.OpenTimeUtc:O}";
 
@@ -1299,20 +1316,9 @@ namespace Sentrix
         /// Start listening.  Call once from MainWindow.  
         /// The EA connects as soon as MT5 is running.
         /// </summary>
-        public void Start()
-        {
-            _cts = new CancellationTokenSource();
-            _readerTask = Task.Run(() => ReaderLoop(_cts.Token));
-        }
+       
 
-        public void Stop()
-        {
-            _cts?.Cancel();
-            IsConnected = false;
-            try { _pipe?.Close(); } catch { }
-        }
-
-        public void Dispose() => Stop();
+       
 
         // ── Public data accessors (called by ExtractTradingData) ──────
 
