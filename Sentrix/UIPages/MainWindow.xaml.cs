@@ -97,6 +97,7 @@ namespace Sentrix
         private string _mt5DataPath;
         private HashSet<long> _closingTickets = new HashSet<long>();
         private bool _isCurrentlyLocked = false;
+        private System.Threading.Timer _dbPollTimer;
         #endregion
 
         #region Win32 API & Helpers
@@ -218,6 +219,10 @@ namespace Sentrix
             _positionRepo = positionrepo;
             MAX_Trades_PER_SESSION = (_config?.MaxTradesPerSession > 0) ? _config.MaxTradesPerSession : AppConfig.MaxTradesPerSession;
 
+           
+
+            StartDatabasePolling();
+
             _tradingSessioinTimeService = new TradingSessionTimeService(_config);
             Loaded += (_, __) => UpdateSettingsButtonState();
 
@@ -229,7 +234,7 @@ namespace Sentrix
                 return;
             }
 
-            StartIntercepting();
+            //StartIntercepting();
 
             this.Loaded += MainWindow_Loaded;
             this.Focus();
@@ -487,6 +492,8 @@ namespace Sentrix
 
         #region Core Logic Methods
 
+        
+
         private bool CheckAttached()
         {
             if (targetHandle == IntPtr.Zero)
@@ -521,9 +528,27 @@ namespace Sentrix
         }
         private void initialiseMT5Service()
         {
+            try
+            {
+
+                _mt5Service.OnDataReceived += (account, positions,events) => OnMT5DataReceived(account, positions,events);
+
+                _mt5Service.OnPipeConnnected += () =>
+                {
+                    Dispatcher.Invoke(() =>
+                    {
+                        Debug.WriteLine("🔌 MT5 Pipe Connected! Syncing fresh config...");
+                        SendConfigToEA();
+                    });
+                };
+                _mt5Service.Start();
+            }
+            catch (Exception ex)
+            {
+
+                Debug.WriteLine("Failed to start MT5Service: " + ex.Message);
+            }
          
-            _mt5Service.OnDataReceived += (account, positions) => OnMT5DataReceived(account, positions);
-            _mt5Service.Start();
         }
         private void GetManifestresourcename()
         {
@@ -531,6 +556,7 @@ namespace Sentrix
             foreach (var n in names)
                 Debug.WriteLine(n);
         }
+        
 
         private void MonitorProcess(object state)
         {
@@ -638,17 +664,29 @@ namespace Sentrix
 
 
 
-        private async Task OnMT5DataReceived(MT5AccountInfo account, List<MT5Position> positions)
+        private async Task OnMT5DataReceived(MT5AccountInfo account, List<MT5Position> positions, List<string> mt5Events)
         {
             if (targetProcess == null || targetProcess.HasExited) return;
 
             try
             {
+                if (mt5Events != null && mt5Events.Count > 0)
+                {
+                    foreach (string eventMsg in mt5Events)
+                    {
+                        // This grabs MQL5 blocks, 1R hits, and Max Loss liquidations!
+                        await _positionRepo.SaveEventAsync(userId, eventMsg);
+                    }
+                }
                 int currentPositionCount = positions.Count;
                 var sessionTimeService = new TradingSessionTimeService(_config);
                 string activeSessionName = sessionTimeService.GetActiveSession(DateTime.UtcNow);
+                if (positions.Count > 0)
+                {
+                    Debug.WriteLine($"[TRACER 2] UI Received trade. Current Active Session is: '{activeSessionName}'");
+                }
 
-                if (account != null) await CheckLossRule(account.Balance, account.Equity);
+                // if (account != null) await CheckLossRule(account.Balance, account.Equity);
                 if (_config == null) _config = _configHelper.Load();
 
                 UpdateSettingsButtonState();
@@ -658,6 +696,8 @@ namespace Sentrix
                 {
                     _currentSession = activeSessionName;
                     await  RegisterSession(activeSessionName);
+
+                    SendConfigToEA();
                 }
 
                 HandleTradeSessionDayReset(currentPositionCount);
@@ -732,6 +772,11 @@ namespace Sentrix
                     foreach (var row in positionRows)
                     {
                         TradeEntry trade = ParseTrade(row);
+                        if (trade == null)
+                        {
+                            Debug.WriteLine($"[TRACER 3 FAILED] ParseTrade returned null for row: {row}");
+                            continue;
+                        }
                         if (trade == null) continue;
 
                         string key = $"{trade.Symbol}|{trade.Entry}|{trade.CreatedUtc:o}";
@@ -759,7 +804,10 @@ namespace Sentrix
                         }
 
                         string session = row.Split('|').Last().Trim();
+                        Debug.WriteLine($"[TRACER 4] Attempting to save to DB. Session: {session} | isToday: {isToday}");
                         if (session == "OffSession") continue;
+                        if(trade.Status != "Open")
+                            ShowBlockSessionAlert($"trade position status ---->{trade.Status}");
 
                         var position = new Positions
                         {
@@ -775,9 +823,10 @@ namespace Sentrix
                             NetProfit = (decimal)trade.Net,
                             Status = trade.Status ?? "Open",
                             TradeDate = trade.CreatedUtc,
-                            Ticket = trade.Ticket
+                            Ticket = (int)trade.Ticket
                             
                         };
+                        Debug.WriteLine($"[TRACER 5] Upserting Position. Key: {key} | Symbol: {position.Symbol} | Entry: {position.EntryPrice} | CreatedUtc: {position.CreatedUtc:o}, | Status{position.Status}");
 
                         await _positionRepo.UpsertPosition(position);
 
@@ -797,8 +846,10 @@ namespace Sentrix
                     {
                         await _positionRepo.MarkPositionDeletedAsync(userId, dbPosition.Symbol, dbPosition.EntryPrice, dbPosition.CreatedUtc,dbPosition.Ticket);
 
+                        string pnlStr = dbPosition.NetProfit >= 0 ? $"+${dbPosition.NetProfit:F2}" : $"-${Math.Abs(dbPosition.NetProfit):F2}";
+                        string closeMsg = $"❌ Closed {dbPosition.Direction} on {dbPosition.Symbol}. P/L: {pnlStr}";
                         // Log the closure here
-                        await _positionRepo.SaveEventAsync(userId, $"❌ Closed {dbPosition.Direction} on {dbPosition.Symbol} in {dbPosition.SessionName}");
+                        await _positionRepo.SaveEventAsync(userId,closeMsg);
                     }
                 }
 
@@ -815,6 +866,7 @@ namespace Sentrix
                 }
 
                await  Dispatcher.Invoke(async () => await  EvaluateAndApplyLockState(currentSession));
+               SendConfigToEA();
             }
             catch (Exception ex)
             {
@@ -870,7 +922,7 @@ namespace Sentrix
                 Net = ParseDoubleSafe(p[7]),
                 // Replace this line inside the ParseTrade method:
                 
-                Ticket = long.TryParse(p[8].Trim(), out long t) ? (int)t : 0
+                Ticket = long.TryParse(p[8].Trim(), out long t) ? t : 0
                 
             };
         }
@@ -1216,17 +1268,41 @@ namespace Sentrix
 
         private void UpdateSettingsButtonState()
         {
-            bool isWithinSession = _tradingSessioinTimeService.IsCurrentTimeWithinAnySession(DateTime.Now);
 
-            bool isMetaraderRunning =
-                targetProcess != null &&
-                !targetProcess.HasExited &&
-                targetHandle != IntPtr.Zero;
-
-            Dispatcher.Invoke(() =>
+            try
             {
-                SettingsBtn.IsEnabled = isWithinSession && !isMetaraderRunning;
-            });
+
+                bool isInsideEST = _tradingSessioinTimeService.IsWithMasterESTWindow();
+
+                bool isMetaraderRunning =
+                    targetProcess != null &&
+                    !targetProcess.HasExited &&
+                    targetHandle != IntPtr.Zero;
+
+                Dispatcher.Invoke(() =>
+                {
+                    bool canEdit = !isInsideEST && !isMetaraderRunning;
+                    SettingsBtn.IsEnabled = isInsideEST && !isMetaraderRunning;
+
+                    if (isInsideEST)
+                    {
+                        SettingsBtn.ToolTip = "Settings are locked during the active trading window (2:00 AM - 11:30 AM EST).";
+                    }
+                    else if (isMetaraderRunning)
+                    {
+                        SettingsBtn.ToolTip = "Please close MetaTrader 5 to adjust settings.";
+                    }
+                    else
+                    {
+                        SettingsBtn.ToolTip = "Edit Settings";
+                    }
+                });
+            }
+            catch (Exception)
+            {
+
+                throw;
+            }
         }
 
         private void ApplyRolePermission()
@@ -1500,14 +1576,14 @@ namespace Sentrix
 
                 ApplyLock(lockReason);
 
-                if (!isTimeAllowed && _config.CloseTradesOutsideSession)
-                {
-                    var positions = _mt5Service.GetOpenPositions();
-                    if (positions != null && positions.Count > 0)
-                    {
-                        CloseAllPositions();
-                    }
-                }
+                //if (!isTimeAllowed && _config.CloseTradesOutsideSession)
+                //{
+                //    var positions = _mt5Service.GetOpenPositions();
+                //    if (positions != null && positions.Count > 0)
+                //    {
+                //       // CloseAllPositions();
+                //    }
+                //}
             }
             else
             {
@@ -1533,7 +1609,7 @@ namespace Sentrix
 
             if (overlay != null)
             {
-                overlay.BlockClicks = true;
+                overlay.BlockClicks = false;
                 overlay.FollowTargetZOrder();
             }
 
@@ -1555,6 +1631,74 @@ namespace Sentrix
             StatusText.Text = message;
             BlockClicksBtn.Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(40, 160, 90));
             BlockClicksBtn.Content = "Block Clicks";
+        }
+
+
+        private void SendConfigToEA()
+        {
+            if(!_mt5Service.IsConnected || _config == null) return;
+
+            bool isTimeAllowed = _tradingSessioinTimeService.IsTradingAllowed(_currentSession, DateTime.Now);
+            bool isSessionActive = isTimeAllowed && !_isManualBlockActive;
+
+            var payload = new EaConfigPayload
+            {
+                Cmd = "UPDATE_CONFIG",
+                SessionActive = isSessionActive,
+                MaxTradesDaily = _config.MaxTradesPerDay,
+                CurrentDailyTrades = _tradesToday,
+                MaxLossPercent = _config.LossPercentValue,
+                Manage1R = true 
+            };
+
+            string json = JsonSerializer.Serialize(payload);
+            _mt5Service.SendCommand(json);
+
+            Debug.WriteLine($"[Sentrix to MT5] pushed new config:{json}"); 
+        }
+
+        private void StartDatabasePolling()
+        {
+            _dbPollTimer = new System.Threading.Timer(PollDatabaseForChanges, null,30000, 30000);
+        }
+
+        private void PollDatabaseForChanges(object state)
+        {
+            try
+            {
+
+                var freshConfig = _configHelper.Load();
+                if (freshConfig != null && HasConfigChanged(freshConfig))
+                {
+                    Dispatcher.Invoke(async () =>
+                    {
+                        Debug.WriteLine("🔄 Remote DB update detected for THIS user! Pushing to EA...");
+
+                        // Update local memory
+                        _config = freshConfig;
+
+                        // Re-evaluate if the user should be locked right now based on the new rules
+                        await EvaluateAndApplyLockState(_currentSession);
+
+                        // Push the new rules down the pipe to MQL5 instantly
+                        SendConfigToEA();
+                    });
+                }
+                HandleTradeSessionDayReset(_tradesToday);
+             //   CheckLimitsAndApplyLockState();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error during database polling: {ex.Message}");
+            }
+        }
+
+        private bool HasConfigChanged(AppConfigData newConfig)
+        {
+            if (_config == null) return true;
+            return _config.MaxTradesPerDay != newConfig.MaxTradesPerDay ||
+                   _config.LossPercentValue != newConfig.LossPercentValue ||
+                   _config.MaxTradesPerSession != newConfig.MaxTradesPerSession;
         }
 
         #region Models

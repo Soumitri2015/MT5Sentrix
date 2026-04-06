@@ -21,6 +21,7 @@ namespace Sentrix
                          "SentriX");
         private ConfigRepository _configRepo;
         public ConfigHelper(ConfigRepository configRepository) { _configRepo = configRepository; }
+        public event Action OnConfigUpdated;
 
         public AppConfigData Load()
         {
@@ -113,5 +114,18 @@ namespace Sentrix
             }
 
         }
+
+        public void SaveNewConfig(int targetUserId, AppConfigData newConfig)
+        {
+            // Save to database
+            _configRepo.SaveConfigByUserId(targetUserId, newConfig);
+
+            // Update local memory cache so the app doesn't load stale data
+            _cachedConfig[targetUserId] = newConfig;
+
+            // Fire the event to tell MainWindow to push to MT5!
+            OnConfigUpdated?.Invoke();
+        }
+
     }
 }

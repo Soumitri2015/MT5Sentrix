@@ -134,13 +134,23 @@ namespace Sentrix
         //}
         public bool IsCurrentTimeWithinAnySession(DateTime nowLocal)
         {
-            if (_appConfigData.TradingSessions == null ||
-                _appConfigData.TradingSessions.Count == 0)
-                return false;
-           var activeSessions = GetActiveSession(DateTime.UtcNow);
-            if(string.IsNullOrEmpty(activeSessions))
-                return false;
-            return IsTradingAllowed(activeSessions, nowLocal);
+
+            bool isMasterWindow = IsWithMasterESTWindow();
+
+            bool isCustomSessionActive  = false;
+            if(_appConfigData.TradingSessions != null && _appConfigData.TradingSessions.Count > 0)
+            {
+                var activeSessionsName = GetActiveSession(DateTime.UtcNow);
+                if(!string.IsNullOrEmpty(activeSessionsName))
+                    isCustomSessionActive =  IsTradingAllowed(activeSessionsName,nowLocal);
+            }
+              
+            //var activeSessions = GetActiveSession(DateTime.UtcNow);
+            //if(string.IsNullOrEmpty(activeSessions))
+            //    return false;
+            //return IsTradingAllowed(activeSessions, nowLocal);
+
+            return isMasterWindow || isCustomSessionActive;
         }
 
         public string GetActiveSession(DateTime utcNow)
@@ -187,6 +197,31 @@ namespace Sentrix
             CheckSession("New York", TimeSpan.FromHours(13), TimeSpan.FromHours(22));
 
             return selectedSession;
+        }
+
+        public bool IsWithMasterESTWindow()
+        {
+            try
+            {
+                DateTime utcNow = DateTime.UtcNow;
+
+                TimeZoneInfo estZone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
+
+                DateTime estTime = TimeZoneInfo.ConvertTimeFromUtc(utcNow, estZone);
+
+                
+
+                TimeSpan startTime = new TimeSpan(2, 0, 0); // 1:00 PM EST
+                TimeSpan endTime = new TimeSpan(11, 30, 0); // 10:00 PM EST
+
+                return estTime.TimeOfDay >= startTime && estTime.TimeOfDay <= endTime;
+            }
+            catch (Exception ex)
+            {
+
+                System.Diagnostics.Debug.WriteLine($"EST Window Check Error: {ex.Message}");
+                return false;
+            }
         }
     }
 }

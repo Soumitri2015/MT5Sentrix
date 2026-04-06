@@ -16,7 +16,7 @@ namespace Sentrix.Models
         public double? SL { get; set; }
         public DateTime CreatedUtc { get; set; }
         public double Net { get; set; }
-        public int Ticket { get; set; } 
+        public long Ticket { get; set; } 
 
         public string Status { get; set; } = "Open";
     }

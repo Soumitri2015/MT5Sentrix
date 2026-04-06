@@ -55,6 +55,7 @@ namespace Sentrix
         [JsonPropertyName("Currency")] public string Currency { get; set; }
         [JsonPropertyName("ServerTime")] public string ServerTime { get; set; }
         [JsonPropertyName("Positions")] public List<MT5Position> Positions { get; set; }
+        [JsonPropertyName("Events")] public List<string> Events { get; set; }
     }
 
     public class MT5Service
@@ -80,7 +81,8 @@ namespace Sentrix
         public bool IsConnected { get; private set; }
 
         /// <summary>Raised on the thread-pool whenever a fresh payload arrives.</summary>
-        public event Action<MT5AccountInfo, List<MT5Position>> OnDataReceived;
+        public event Action<MT5AccountInfo, List<MT5Position>,List<string>> OnDataReceived;
+        public event Action OnPipeConnnected;
         private const string CmdPipeName = "SentrixCmdPipe";
         private NamedPipeServerStream _cmdPipe;
         private readonly object _cmdLock = new();
@@ -119,6 +121,8 @@ namespace Sentrix
                     Debug.WriteLine($"MT5Service: cmd pipe EA connected.");
 
                     lock (_cmdLock) { _cmdPipe = pipe; }
+
+                    OnPipeConnnected?.Invoke();
 
                     // Keep the pipe alive quietly. 
                     while (pipe.IsConnected && !token.IsCancellationRequested)
@@ -201,6 +205,8 @@ namespace Sentrix
 
                     IsConnected = true;
                     Debug.WriteLine("MT5Service: data pipe EA connected.");
+
+                    //OnPipeConnnected?.Invoke();
 
                     using var reader = new BinaryReader(pipe, Encoding.UTF8, leaveOpen: true);
 
@@ -306,11 +312,20 @@ namespace Sentrix
                 {
                     _latest = payload;
                 }
+                if (payload.Positions != null && payload.Positions.Count > 0)
+                {
+                    Debug.WriteLine($"[TRACER 1] Data Pipe received {payload.Positions.Count} live positions from MT5.");
+                }
 
                 // Fire event on thread-pool so callers don't block the reader
-                OnDataReceived?.Invoke(
-                    GetAccountInfo(),
-                    GetOpenPositions());
+                //OnDataReceived?.Invoke(
+                //    GetAccountInfo(),
+                //    GetOpenPositions());
+
+                Task.Run(() =>
+                {
+                    OnDataReceived?.Invoke(GetAccountInfo(), GetOpenPositions(),payload.Events);
+                });
             }
             catch (JsonException ex)
             {

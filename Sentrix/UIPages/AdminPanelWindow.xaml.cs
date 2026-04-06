@@ -79,15 +79,18 @@ namespace Sentrix.UIPages
             private bool _supressChangeTracking;
 
             private bool _suppressChangeTracking;
+            private ConfigHelper _configHelper;
 
 
             private ObservableCollection<SessionRow> _sessionRows = new ObservableCollection<SessionRow>();
             public List<string> TimeSlotsList => TimeSlots.All;
-            public AdminPanelWindow(UserRepository userRepository, ConfigRepository configRepo)
+            public AdminPanelWindow(UserRepository userRepository, ConfigRepository configRepo, ConfigHelper helper)
             {
                 InitializeComponent();
                 _userRepo = userRepository;
                 _configRepo = configRepo;
+                _configHelper = helper;
+
 
                 SessionsGrid.ItemsSource = _sessionRows;
                 _sessionRows.CollectionChanged += (_, _) => EvaluateDirty();
@@ -346,7 +349,9 @@ namespace Sentrix.UIPages
 
                 try
                 {
-                    _configRepo.SaveConfigByUserId(_selectedUser.Id, config);
+                    //_configRepo.SaveConfigByUserId(_selectedUser.Id, config);
+                    _configHelper.SaveNewConfig(_selectedUser.Id, config);
+                    
                     _loadConfig = config;          // update snapshot → no longer dirty
                     SaveBtn.IsEnabled = false;
 
