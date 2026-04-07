@@ -674,6 +674,23 @@ namespace Sentrix
                 {
                     foreach (string eventMsg in mt5Events)
                     {
+
+                        string displayTime = null;
+                        string messageToXSave = eventMsg;
+                        if(eventMsg.StartsWith("[") && eventMsg.Contains("}"))
+                        {
+                            int closingBracket = eventMsg.IndexOf(']');
+
+                            string timeStr = eventMsg.Substring(1, closingBracket - 1);
+
+                            if(DateTime.TryParseExact(timeStr,"yyyy.MM.dd HH:mm:ss",System.Globalization.CultureInfo.InvariantCulture, 
+                                                       System.Globalization.DateTimeStyles.AssumeUniversal, out DateTime parsedTime))
+                            {
+                                displayTime= parsedTime.ToString("yyyy-MM-dd HH:mm:ss");
+                            }
+
+                            messageToXSave = eventMsg.Substring(closingBracket + 1).Trim();
+                        }
                         // This grabs MQL5 blocks, 1R hits, and Max Loss liquidations!
                         await _positionRepo.SaveEventAsync(userId, eventMsg);
                     }
@@ -1641,6 +1658,21 @@ namespace Sentrix
             bool isTimeAllowed = _tradingSessioinTimeService.IsTradingAllowed(_currentSession, DateTime.Now);
             bool isSessionActive = isTimeAllowed && !_isManualBlockActive;
 
+            List<string> sessionWindows = new List<string>();
+
+            if(_config.TradingSessions != null)
+            {
+                foreach (var kv in _config.TradingSessions.Values)
+                {
+                    foreach(var window in kv)
+                    {
+                        sessionWindows.Add($"{window.StartTime}-{window.EndTime}");
+                    }
+                }
+            }
+
+            string flattendSessions = string.Join("|", sessionWindows);
+
             var payload = new EaConfigPayload
             {
                 Cmd = "UPDATE_CONFIG",
@@ -1648,7 +1680,8 @@ namespace Sentrix
                 MaxTradesDaily = _config.MaxTradesPerDay,
                 CurrentDailyTrades = _tradesToday,
                 MaxLossPercent = _config.LossPercentValue,
-                Manage1R = true 
+                Manage1R = true ,
+                AllowedSession = flattendSessions
             };
 
             string json = JsonSerializer.Serialize(payload);

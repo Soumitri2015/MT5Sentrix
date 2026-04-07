@@ -26,5 +26,8 @@ namespace Sentrix.Models
 
         [JsonPropertyName("Manage1R")]
         public bool Manage1R { get; set; }
+
+        [JsonPropertyName("AllowedSession")]
+        public string AllowedSession { get; set; }
     }
 }

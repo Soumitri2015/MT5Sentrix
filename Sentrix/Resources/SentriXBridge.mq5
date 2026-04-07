@@ -22,6 +22,11 @@ ulong g_managedTickets[];
 
 string g_eventQueue[];
 
+string CONFIG_FILE = "Sentrix_LastConfig.txt";
+
+string g_AllowedSessions = "";
+string OFFLINE_QUEUE_FILE = "Sentrix_OfflineQueue.txt";
+
 
 //+------------------------------------------------------------------+
 int OnInit()
@@ -81,6 +86,12 @@ void OnTimer()
    if(g_cmdPipe == INVALID_HANDLE)
    {
       g_cmdPipe = FileOpen(PIPE_CMD_NAME, FILE_READ | FILE_WRITE | FILE_BIN | FILE_ANSI, 0, CP_UTF8);
+      
+      if(g_pipe != INVALID_HANDLE){
+      
+         SyncOfflineEvents();
+      }
+      else return;
    }
 
    // 3. Read incoming commands
@@ -146,7 +157,10 @@ void ReadIncomingCommand()
       g_MaxTradesDaily     = (int)ExtractNumber(cmd, "\"MaxTradesDaily\":");
       g_CurrentDailyTrades = (int)ExtractNumber(cmd, "\"CurrentDailyTrades\":");
       g_MaxLossPercent     = ExtractNumber(cmd, "\"MaxLossPercent\":");
+      g_AllowedSessions = ExtractString(cmd,"\"AllowedSession\":");
       Print("️ Sentrix Rules Updated | Active: ", g_SessionActive, " | Trades: ", g_CurrentDailyTrades, "/", g_MaxTradesDaily);
+      
+      SaveConfigOffline();
       return;
    }
 
@@ -537,12 +551,132 @@ void RecoverManagedTickets()
 
 
 void LogEvent(string message){
-   Print("Sentrix Event---"+ message);
+   string timeStr = TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS);
+   string stampedMessage = "[" + timeStr + "] " + message;
+
+   Print("Sentrix Event---" + stampedMessage);
    
-   int size = ArraySize(g_eventQueue);
-   
-   ArrayResize(g_eventQueue, size+1);
-   g_eventQueue[size]= message;
+   //Route the data based on connection status
+   if(g_pipe == INVALID_HANDLE)
+   {
+      SaveEventOffline(stampedMessage); //Save to disk!
+   }
+   else
+   {
+      int size = ArraySize(g_eventQueue);
+      ArrayResize(g_eventQueue, size + 1);
+      g_eventQueue[size] = stampedMessage; //Send instantly!
+   }
 }
 
 //+------------------------------------------------------------------+
+
+
+void SaveConfigOffline(){
+
+   int handle = FileOpen(CONFIG_FILE, FILE_WRITE | FILE_TXT | FILE_ANSI);
+   
+   if(handle != INVALID_HANDLE)
+   {
+      // FIX 1: Added %s at the end, used ^ separator, and added the missing semicolon!
+      string data = StringFormat("%d^%d^%d^%.2f^%d^%s", 
+         g_SessionActive, g_MaxTradesDaily, g_CurrentDailyTrades, g_MaxLossPercent, g_Manage1R, g_AllowedSessions);
+         
+      FileWrite(handle, data);
+      FileClose(handle);
+   }
+   
+   
+}
+
+void LoadConfigOffline(){
+   if(FileIsExist(CONFIG_FILE))
+   {
+      int handle = FileOpen(CONFIG_FILE, FILE_READ | FILE_TXT | FILE_ANSI);
+      if(handle != INVALID_HANDLE)
+      {
+         string data = FileReadString(handle);
+         string parts[];
+         
+         // FIX 2: Split by ^ to match the Save function
+         StringSplit(data, '^', parts);
+         
+         if(ArraySize(parts) >= 6)
+         {
+            g_SessionActive = (bool)StringToInteger(parts[0]);
+            g_MaxTradesDaily =  (int)StringToInteger(parts[1]);
+            g_CurrentDailyTrades = (int)StringToInteger(parts[2]);
+            g_MaxLossPercent = StringToDouble(parts[3]);
+            g_Manage1R = (bool)StringToInteger(parts[4]);
+            g_AllowedSessions = parts[5];
+            
+            Print(" SentriX: Loaded offline rules from local disk. Sessions: ", g_AllowedSessions);
+         }
+         FileClose(handle);
+      }
+   }
+}
+
+
+string ExtractString(string json, string key)
+{
+   int startPos = StringFind(json, key);
+   
+   // FIX 3: Must return empty string ""
+   if(startPos < 0) return ""; 
+   
+   startPos += StringLen(key);
+   
+   // FIX 4: Fixed spelling to quoteStart
+   int quoteStart = StringFind(json, "\"", startPos);
+   if(quoteStart < 0) return "";
+   
+   // FIX 5: Added the completely missing quoteEnd calculation line!
+   int quoteEnd = StringFind(json, "\"", quoteStart + 1);
+   if(quoteEnd < 0) return "";
+   
+   return StringSubstr(json, quoteStart + 1, quoteEnd - quoteStart - 1);
+}
+
+
+
+//+------------------------------------------------------------------+
+
+// 1. Writes a single event to the offline text file
+void SaveEventOffline(string message)
+{
+   int handle = FileOpen(OFFLINE_QUEUE_FILE, FILE_WRITE | FILE_READ | FILE_TXT | FILE_ANSI);
+   if(handle != INVALID_HANDLE)
+   {
+      FileSeek(handle, 0, SEEK_END); 
+      FileWrite(handle, message);
+      FileClose(handle);
+   }
+}
+
+
+// 2. Reads the file, dumps it into the live queue, and deletes the file
+void SyncOfflineEvents()
+{
+   if(FileIsExist(OFFLINE_QUEUE_FILE))
+   {
+      int handle = FileOpen(OFFLINE_QUEUE_FILE, FILE_READ | FILE_TXT | FILE_ANSI);
+      if(handle != INVALID_HANDLE)
+      {
+         Print("SentriX: Syncing offline events to C#...");
+         while(!FileIsEnding(handle))
+         {
+            string msg = FileReadString(handle);
+            if(StringLen(msg) > 0)
+            {
+               // Add it back to the live array to be sent to C#
+               int size = ArraySize(g_eventQueue);
+               ArrayResize(g_eventQueue, size + 1);
+               g_eventQueue[size] = msg; 
+            }
+         }
+         FileClose(handle);
+         FileDelete(OFFLINE_QUEUE_FILE); 
+      }
+   }
+}
