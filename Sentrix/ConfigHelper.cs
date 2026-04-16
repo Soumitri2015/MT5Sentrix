@@ -71,8 +71,8 @@ namespace Sentrix
                 CloseTradesOutsideSession = bool.Parse(ConfigurationManager.AppSettings["CloseTradesOutsideSession"] ?? "false"),
                 TradingSessions = new Dictionary<string, List<TimeWindow>>
         {
-            { "London", new List<TimeWindow> { new TimeWindow { StartTime="08:00", EndTime="10:00" } } },
-                    {"NewYork", new List<TimeWindow> { new TimeWindow { StartTime="07:00", EndTime="09:00" } } }
+            { "London", new List<TimeWindow> { new TimeWindow { StartTime="02:00", EndTime="08:00" } } },
+                    {"NewYork", new List<TimeWindow> { new TimeWindow { StartTime="08:00", EndTime="11:30" } } }
         }
             };
         }
