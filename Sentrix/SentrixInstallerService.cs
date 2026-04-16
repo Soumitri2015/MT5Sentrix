@@ -152,14 +152,26 @@ namespace Sentrix
             try
             {
                 string expertsFolder = Path.Combine(mt5DataPath, "MQL5", "Experts");
+                string templateFolder = Path.Combine(mt5DataPath, "MQL5", "Profiles", "Templates");
                 Directory.CreateDirectory(expertsFolder);
+                Directory.CreateDirectory(templateFolder);
 
                 // CHANGE 1: Use the .ex5 extension for the destination file
                 string destPath = Path.Combine(expertsFolder, "SentriXBridge.ex5");
 
+
                 // CHANGE 2: Extract the embedded .ex5 resource
                 // Ensure your namespace exactly matches your project's structure
                 ExtractEmbeddedResource("Sentrix.Resources.SentriXBridge.ex5", destPath);
+
+                ExtractEmbeddedResource(
+                            "Sentrix.Resources.SentrixInstaller.ex5",
+                            Path.Combine(expertsFolder, "SentriXInstaller.ex5"));
+
+                ExtractEmbeddedResource(
+                            "Sentrix.Resources.SentrixBridge_tp.tpl",
+                            Path.Combine(templateFolder, "SentriXBridge.tpl"));
+
 
                 Debug.WriteLine($"EA copied to: {destPath}");
                 return new InstallResult { Success = true };
@@ -238,114 +250,6 @@ namespace Sentrix
             }
         }
 
-        // ── Write a default chart profile with EA pre-attached ───────────
-        //private void WriteChartProfile(string mt5DataPath)
-        //{
-        //    try
-        //    {
-        //        string profilesFolder = Path.Combine(
-        //            mt5DataPath, "profiles", "default");
-        //        Directory.CreateDirectory(profilesFolder);
-
-        //        // chart01.chr is the first chart MT5 opens by default
-        //        string chartFile = Path.Combine(profilesFolder, "chart01.chr");
-
-        //        // Only create if it doesn't exist — don't overwrite trader's setup
-        //        if (File.Exists(chartFile)) return;
-
-        //        File.WriteAllText(chartFile,
-        //            "<chart>\r\n" +
-        //            "symbol=EURUSD\r\n" +
-        //            "period=1\r\n" +        // M1
-        //            "<expert>\r\n" +
-        //            "name=SentriXBridge\r\n" +
-        //            "window=0\r\n" +
-        //            "login=0\r\n" +
-        //            "symbol=EURUSD\r\n" +
-        //            "</expert>\r\n" +
-        //            "</chart>\r\n");
-
-        //        Debug.WriteLine("Chart profile written with SentriXBridge pre-attached.");
-        //    }
-        //    catch (Exception ex)
-        //    {
-        //        Debug.WriteLine($"WriteChartProfile warning: {ex.Message}");
-        //    }
-        //}
-
-        // ── Write a default chart profile with EA pre-attached ───────────
-        //private void WriteChartProfile(string mt5DataPath)
-        //{
-        //    try
-        //    {
-        //        // 1. Discover the user's ACTUALLY active profile
-        //        string lastProfileFile = Path.Combine(mt5DataPath, "profiles", "last_profile.ini");
-        //        string activeProfile = "default"; // Fallback
-
-        //        if (File.Exists(lastProfileFile))
-        //        {
-        //            // MT5 .ini files are written in UTF-16 LE (Unicode)
-        //            byte[] bytes = File.ReadAllBytes(lastProfileFile);
-        //            string profileName = Encoding.Unicode.GetString(bytes).Replace("\0", "").Trim();
-
-        //            if (!string.IsNullOrWhiteSpace(profileName))
-        //            {
-        //                activeProfile = profileName;
-        //            }
-        //        }
-
-        //        string profilesFolder = Path.Combine(mt5DataPath, "profiles", activeProfile);
-        //        Directory.CreateDirectory(profilesFolder);
-
-        //        // 2. Find their first existing chart, or create one if the folder is empty
-        //        var chartFiles = Directory.GetFiles(profilesFolder, "*.chr");
-        //        string targetChart = chartFiles.Length > 0
-        //            ? chartFiles[0]
-        //            : Path.Combine(profilesFolder, "chart01.chr");
-
-        //        if (!File.Exists(targetChart))
-        //        {
-        //            // No charts exist in this profile, create a fresh one with the EA
-        //            File.WriteAllText(targetChart,
-        //                "<chart>\r\n" +
-        //                "symbol=EURUSD\r\n" +
-        //                "period=1\r\n" +        // M1
-        //                "<expert>\r\n" +
-        //                "name=SentriXBridge\r\n" +
-        //                "window=0\r\n" +
-        //                "login=0\r\n" +
-        //                "symbol=EURUSD\r\n" +
-        //                "</expert>\r\n" +
-        //                "</chart>\r\n");
-
-        //            Debug.WriteLine($"Created new chart with EA in profile: {activeProfile}");
-        //            return;
-        //        }
-
-        //        // 3. Inject the EA into their existing chart (if not already there)
-        //        string chartContent = File.ReadAllText(targetChart);
-        //        if (!chartContent.Contains("SentriXBridge"))
-        //        {
-        //            string injection =
-        //                "<expert>\r\n" +
-        //                "name=SentriXBridge\r\n" +
-        //                "window=0\r\n" +
-        //                "login=0\r\n" +
-        //                "symbol=EURUSD\r\n" +
-        //                "</expert>\r\n";
-
-        //            // Safely inject right before the closing </chart> tag
-        //            chartContent = chartContent.Replace("</chart>", injection + "</chart>");
-        //            File.WriteAllText(targetChart, chartContent);
-
-        //            Debug.WriteLine($"Injected EA into existing chart in profile: {activeProfile}");
-        //        }
-        //    }
-        //    catch (Exception ex)
-        //    {
-        //        Debug.WriteLine($"WriteChartProfile warning: {ex.Message}");
-        //    }
-        //}
 
 
         private void WriteChartProfile(string mt5DataPath)
@@ -375,8 +279,8 @@ namespace Sentrix
 
                 string injection =
                     "<expert>\r\n" +
-                    "name=SentriXBridge\r\n" +
-                    "path=Experts\\SentriXBridge.ex5\r\n" +
+                    "name=SentriXInstaller\r\n" +
+                    "path=Experts\\SentriXInstaller.ex5\r\n" +
                     "expertmode=5\r\n" +
                     "window=0\r\n" +
                     "</expert>\r\n";

@@ -148,8 +148,27 @@ namespace Sentrix
         {
             _cts?.Cancel();
             IsConnected = false;
-            try { _pipe?.Close(); } catch { }
-            try { _cmdPipe?.Dispose(); } catch { }
+            if(_pipe != null)
+            {
+                try { if(_pipe.IsConnected) _pipe.Disconnect(); } catch { }
+
+                try { _pipe?.Close(); } catch { }
+                try { _cmdPipe?.Dispose(); } catch { }
+                _pipe = null;
+            }
+
+            if(_cmdPipe != null)
+            {
+                lock (_cmdLock)
+                {
+
+                    try { if(_cmdPipe.IsConnected) _cmdPipe.Disconnect(); } catch { }
+                    try { _cmdPipe?.Close(); } catch { }
+                    try { _cmdPipe.Dispose(); } catch { }
+                    _cmdPipe = null;
+                }
+            }
+             Debug.WriteLine("MT5Service: Stopped and cleaned up pipes.");
         }
 
         public void Dispose() => Stop();

@@ -132,7 +132,7 @@ namespace Sentrix
         //    }
         //    return false;
         //}
-        public bool IsCurrentTimeWithinAnySession(DateTime nowLocal)
+        public async Task<bool> IsCurrentTimeWithinAnySession(DateTime nowLocal)
         {
 
             bool isMasterWindow = IsWithMasterESTWindow();
@@ -140,7 +140,7 @@ namespace Sentrix
             bool isCustomSessionActive  = false;
             if(_appConfigData.TradingSessions != null && _appConfigData.TradingSessions.Count > 0)
             {
-                var activeSessionsName = GetActiveSession(DateTime.UtcNow);
+                var activeSessionsName =await  GetActiveSession(DateTime.UtcNow);
                 if(!string.IsNullOrEmpty(activeSessionsName))
                     isCustomSessionActive =  IsTradingAllowed(activeSessionsName,nowLocal);
             }
@@ -153,50 +153,43 @@ namespace Sentrix
             return isMasterWindow || isCustomSessionActive;
         }
 
-        public string GetActiveSession(DateTime utcNow)
+        public async Task<string> GetActiveSession(DateTime utcNow)
         {
-            var now = utcNow.TimeOfDay;
-
-            string selectedSession = null;
-            TimeSpan latestStart = TimeSpan.MinValue;
-
-            bool IsInRange(TimeSpan start, TimeSpan end)
+            // 1. Convert UTC to Eastern Time (Automatically handles EST/EDT shifts)
+            TimeZoneInfo easternZone;
+            try
             {
-                if (start <= end)
-                    return now >= start && now <= end;
-                else
-                    return now >= start || now <= end;
+                // Standard ID for Windows environments
+                easternZone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
+            }
+            catch (TimeZoneNotFoundException)
+            {
+                // Fallback for Linux/macOS environments (if applicable)
+                easternZone = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
             }
 
-            void CheckSession(string name, TimeSpan start, TimeSpan end)
+            DateTime easternTime = TimeZoneInfo.ConvertTimeFromUtc(utcNow, easternZone);
+            TimeSpan now = easternTime.TimeOfDay;
+
+            // 2. Define the hardcoded ET windows
+            TimeSpan londonStart = new TimeSpan(2, 0, 0);   // 2:00 AM ET
+            TimeSpan londonEnd = new TimeSpan(7, 59, 59);   // 7:59:59 AM ET
+
+            TimeSpan nyStart = new TimeSpan(8, 0, 0);       // 8:00 AM ET
+            TimeSpan nyEnd = new TimeSpan(11, 30, 0);       // 11:30 AM ET
+
+            // 3. Evaluate current time against the windows
+            if (now >= londonStart && now <= londonEnd)
             {
-                if (IsInRange(start, end))
-                {
-                    // pick the session with the latest start time
-                    if (start > latestStart)
-                    {
-                        latestStart = start;
-                        selectedSession = name;
-                    }
-                }
+                return "London";
+            }
+            else if (now >= nyStart && now <= nyEnd)
+            {
+                return "NewYork"; // Matches the MQL5 exact string (no space)
             }
 
-            
-            CheckSession("Tokyo", TimeSpan.FromHours(0), TimeSpan.FromHours(9));
-
-            
-            CheckSession("Singapore", TimeSpan.FromHours(1), TimeSpan.FromHours(9));
-
-            
-            CheckSession("Frankfurt", TimeSpan.FromHours(6), TimeSpan.FromHours(15));
-
-            
-            CheckSession("London", TimeSpan.FromHours(7), TimeSpan.FromHours(16));
-
-            
-            CheckSession("New York", TimeSpan.FromHours(13), TimeSpan.FromHours(22));
-
-            return selectedSession;
+            // Return null (or "None") if outside allowed trading hours
+            return "Frankfurt";
         }
 
         public bool IsWithMasterESTWindow()

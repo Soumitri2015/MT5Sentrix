@@ -9,6 +9,8 @@
 #define PIPE_NAME      "\\\\.\\pipe\\SentrixDataPipe"
 #define PIPE_CMD_NAME  "\\\\.\\pipe\\SentrixCmdPipe"
 #define INTERVAL_MS    1000
+#define SERVICE_CHART_NAME "SENTRIX_BRIDGE_SERVICE"
+#define INTERVAL_MS 250
 
 int g_pipe    = INVALID_HANDLE;   // data pipe  — EA writes, C# reads
 int g_cmdPipe = INVALID_HANDLE;   // command pipe — C# writes, EA reads
@@ -19,25 +21,73 @@ int g_CurrentDailyTrades = 0;
 double g_MaxLossPercent = 2.0;
 bool g_Manage1R = true;
 ulong g_managedTickets[];
+int g_CurrentSessionTrades = 0;
+string g_ActiveSessionName = "None";
+int g_MaxTradeSession =0;
+int g_UtcOffsetMinutes = 0;
+int g_LocalHour   = 0;
+int g_LocalMinute = 0;
+bool g_OffsetCalibrated = false;
+
+int g_TradesLondon = 0;
+int g_TradesNewYork = 0;
+
 
 string g_eventQueue[];
 
 string CONFIG_FILE = "Sentrix_LastConfig.txt";
+string STATE_FILE = "Sentrix_TradeState.txt";
+
 
 string g_AllowedSessions = "";
 string OFFLINE_QUEUE_FILE = "Sentrix_OfflineQueue.txt";
 
 
+bool IServiceChart()
+{
+   string comment = ChartGetString(0,CHART_COMMENT);
+   return comment == SERVICE_CHART_NAME;
+  
+}
+
 //+------------------------------------------------------------------+
 int OnInit()
 {
+  // if(!IServiceChart()){
+    //  Print("SentriXBridgeCore: Not service chart → shutting down.");
+     //    return(INIT_FAILED);
+   //}
+   ChartSetString(0, CHART_COMMENT, "SENTRIX_BRIDGE_SERVICE");
+   ChartSetInteger(0, CHART_SHOW, false);
    Print("SentriXBridge: starting...");
    EventSetMillisecondTimer(INTERVAL_MS);
    
+   LoadConfigOffline();
+   LoadStateOffline();
+   
    RecoverManagedTickets();
+   
+   if(g_MaxTradeSession >0){
+      printf(g_MaxTradeSession);
+      }
+      
+   
+   datetime from, to;
+MqlDateTime t;
+TimeToStruct(TimeCurrent(), t);
+ENUM_DAY_OF_WEEK day = (ENUM_DAY_OF_WEEK)t.day_of_week;
+
+for(int i = 0; i < 10; i++)
+{
+   if(SymbolInfoSessionTrade(_Symbol, day, i, from, to))
+      Print("Broker session index=", i, " from=", TimeToString(from), " to=", TimeToString(to));
+}
    
    return INIT_SUCCEEDED;
 }
+
+
+
 
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
@@ -54,10 +104,12 @@ void PushDataToCSharp()
    if(g_pipe == INVALID_HANDLE) return;
 
    string json = BuildJSON();
-   int len = StringLen(json);
+   int len = StringLen(json); 
+   
+   ResetLastError();
 
-   if(FileWriteInteger(g_pipe, len, INT_VALUE) < 0 ||
-      FileWriteString(g_pipe, json, len)       < 0)
+   if(FileWriteInteger(g_pipe, len, INT_VALUE) == 0 ||
+      FileWriteString(g_pipe, json, len)      == 0 || GetLastError() != 0)
    {
       Print("SentriXBridge: data pipe write failed, resetting.");
       FileClose(g_pipe);
@@ -69,23 +121,28 @@ void PushDataToCSharp()
          g_cmdPipe = INVALID_HANDLE;
       }
    }
+   
+   FileFlush(g_pipe);
 }
 
 //+------------------------------------------------------------------+
 void OnTimer()
 {
+
+   CheckDailyReset();
+   //RunOfflineSessionWatchdog();
    // ── 1. Connect data pipe (EA → C#) ───────────────────────────
    // 1. Connect data pipe (EA → C#)
    if(g_pipe == INVALID_HANDLE)
    {
-      g_pipe = FileOpen(PIPE_NAME, FILE_READ | FILE_WRITE | FILE_BIN | FILE_ANSI, 0, CP_UTF8);
+      g_pipe = FileOpen(PIPE_NAME, FILE_READ | FILE_WRITE | FILE_BIN | FILE_ANSI|FILE_SHARE_READ|FILE_SHARE_WRITE| 0, CP_UTF8);
       if(g_pipe == INVALID_HANDLE) return;
    }
 
    // 2. Connect command pipe (C# → EA)
    if(g_cmdPipe == INVALID_HANDLE)
    {
-      g_cmdPipe = FileOpen(PIPE_CMD_NAME, FILE_READ | FILE_WRITE | FILE_BIN | FILE_ANSI, 0, CP_UTF8);
+      g_cmdPipe = FileOpen(PIPE_CMD_NAME, FILE_READ | FILE_WRITE | FILE_BIN | FILE_ANSI | FILE_SHARE_READ | FILE_SHARE_WRITE, 0, CP_UTF8);
       
       if(g_pipe != INVALID_HANDLE){
       
@@ -103,6 +160,7 @@ void OnTimer()
 
 void OnTick() 
 {
+   
    if(g_SessionActive && g_MaxLossPercent >0){
       double balance = AccountInfoDouble(ACCOUNT_BALANCE);
       double equity = AccountInfoDouble(ACCOUNT_EQUITY);
@@ -112,11 +170,13 @@ void OnTick()
          if(lossPercent >= g_MaxLossPercent)
          {
             LogEvent("🚨 SENTRIX FATAL: Daily Max Loss (" + DoubleToString(g_MaxLossPercent, 2) + "%) reached! Liquidating...");
+            
             CloseAllPositions();     // You will need to write this helper function
             g_SessionActive = false; // Lock out further trades immediately
          }
          
       }
+      
    }
    
    if(g_Manage1R)
@@ -129,6 +189,19 @@ void OnTick()
 void ReadIncomingCommand()
 {
    if(g_cmdPipe == INVALID_HANDLE) return;
+   
+   //if(FileIsEnding(g_cmdPipe))
+   //{
+     // Print("SentriXBridge: Connection dropped by C#. Resetting handles...");
+      //FileClose(g_cmdPipe);
+      //g_cmdPipe = INVALID_HANDLE;
+      
+      //if(g_pipe != INVALID_HANDLE){
+        // FileClose(g_pipe);
+       //  g_pipe = INVALID_HANDLE;
+      //}
+      //return;
+  // }
 
    uint available = (uint)FileSize(g_cmdPipe);
    if(available < 4) return;
@@ -149,18 +222,39 @@ void ReadIncomingCommand()
 
    Print("SentriXBridge: received command — ", cmd);
    
+   
    if(StringFind(cmd, "\"CMD\":\"UPDATE_CONFIG\"")>=0){
    
-      g_SessionActive = (StringFind(cmd,"\"SessionActive\":true") >=0);
+      //g_SessionActive = (StringFind(cmd,"\"SessionActive\":true") >=0);
       g_Manage1R = (StringFind(cmd,"\"Manage1R\":true") >= 0);
       
+      string incommingSession = ExtractString(cmd,"\"ActiveSessionName\":");
+      if(incommingSession != g_ActiveSessionName && incommingSession != "None" && g_ActiveSessionName != "None")
+      {
+         Print("🔄 Session shifted from ", g_ActiveSessionName, " to ", incommingSession, ". Resetting session trade count.");
+         g_CurrentSessionTrades = 0;
+         SaveStateOffline(); // Save the reset
+      }
+      //g_ActiveSessionName = incommingSession;
+      g_MaxTradeSession =(int)ExtractNumber(cmd,"\"MaxTradesPerSession\":");
+      
       g_MaxTradesDaily     = (int)ExtractNumber(cmd, "\"MaxTradesDaily\":");
+      
+      int SentrixDailyTrades = (int)ExtractNumber(cmd,"\"CurrentDailyTrades\":");
+      int csharpSessionTrades = (int)ExtractNumber(cmd, "\"CurrentSessionTrades\":");
+      
       g_CurrentDailyTrades = (int)ExtractNumber(cmd, "\"CurrentDailyTrades\":");
       g_MaxLossPercent     = ExtractNumber(cmd, "\"MaxLossPercent\":");
       g_AllowedSessions = ExtractString(cmd,"\"AllowedSession\":");
+      //g_UtcOffsetMinutes = (int)(ExtractNumber(cmd,"\"UTCTimeOffsetHours\":") * 60);
+      //int localHour   = (int)ExtractNumber(cmd, "\"LocalTimeHour\":");
+      //int localMinute = (int)ExtractNumber(cmd, "\"LocalTimeMinute\":");
+      
       Print("️ Sentrix Rules Updated | Active: ", g_SessionActive, " | Trades: ", g_CurrentDailyTrades, "/", g_MaxTradesDaily);
       
       SaveConfigOffline();
+      SaveStateOffline();
+      
       return;
    }
 
@@ -334,12 +428,25 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
             if(entryType == DEAL_ENTRY_IN) 
             {
                // 1. Evaluate the rules FIRST (before trusting MT5's position cache)
-               bool violateSession = !g_SessionActive;
-               bool violateTrades  = (g_CurrentDailyTrades >= g_MaxTradesDaily);
-
-               if(violateSession || violateTrades)
+               int activeSessionTradeCount = 0;
+               string activeSession = GetActiveSession();
+               if(activeSession == "London")       activeSessionTradeCount = g_TradesLondon;
+               else if(activeSession == "NewYork") activeSessionTradeCount = g_TradesNewYork;
+               printf(g_SessionActive);
+            
+               // 2. Evaluate limits
+               bool violateSession       = !g_SessionActive || !IsCurrentTimeAllowedWindow(); 
+               bool violateDailyTrades   = (g_MaxTradesDaily > 0 && g_CurrentDailyTrades >= g_MaxTradesDaily);
+               bool violateSessionTrades = (g_MaxTradeSession > 0 && activeSessionTradeCount >= g_MaxTradeSession);
+               if(violateSession || violateDailyTrades || violateSessionTrades)
                {
-                  LogEvent("🚨 SENTRIX BLOCK: Unauthorized trade instantly closed (Ticket: " + (string)trans.position + ")");
+                  string reason = violateSession ? "Time Blocked" : (violateDailyTrades ? "Daily Limit" : "Session Limit");
+                  string blockMsg = "🚨 MetaTrader BLOCK: Unauthorized trade Reason: " + reason + " (Ticket: " + (string)trans.position + ")";
+                  
+                  printf(blockMsg);
+                  LogEvent(blockMsg);
+                  //TriggerMT5Alert("🚨 SENTRIX BLOCK: Unauthorized trade  (Ticket: " + (string)trans.position + ")");
+                  TriggerMT5Alert(blockMsg);
                   
                   // 2. RACE CONDITION FIX: Wait up to 200ms for MT5 to cache the position
                   for(int i = 0; i < 20; i++) 
@@ -355,13 +462,26 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
                else
                {
                   Print("✅ Sentrix Tracking: New valid trade successfully opened. Ticket: ", trans.position);
+                 // TriggerMT5Alert(" Sentrix Tracking: New valid trade successfully opened. Ticket:---"+  trans.position);
+                  
+                  g_CurrentDailyTrades++;
+                  if(activeSession == "London")       g_TradesLondon++;
+                  else if(activeSession == "NewYork") g_TradesNewYork++;
+                  SaveStateOffline();
                   PushDataToCSharp(); 
                }
             }
             else if(entryType == DEAL_ENTRY_OUT)
             {
                Print("🔒 Sentrix Tracking: Trade successfully closed. Ticket: ", trans.position);
+      
+               // We keep this so the C# UI updates instantly when a trade closes!
                PushDataToCSharp();
+                  //Print("🔒 Sentrix Tracking: Trade successfully closed. Ticket: ", trans.position);
+               //TriggerMT5Alert(" Sentrix Tracking: Trade successfully closed. Ticket:-- "+ trans.position);
+               
+               //SaveStateOffline();
+               //PushDataToCSharp();
             }
          }
       }
@@ -578,9 +698,13 @@ void SaveConfigOffline(){
    
    if(handle != INVALID_HANDLE)
    {
-      // FIX 1: Added %s at the end, used ^ separator, and added the missing semicolon!
-      string data = StringFormat("%d^%d^%d^%.2f^%d^%s", 
-         g_SessionActive, g_MaxTradesDaily, g_CurrentDailyTrades, g_MaxLossPercent, g_Manage1R, g_AllowedSessions);
+      
+       string data = StringFormat("%d^%d^%d^%.2f^%d^%s^%s^%d^%d^%d", 
+   g_SessionActive, g_MaxTradesDaily, g_CurrentDailyTrades, 
+   g_MaxLossPercent, g_Manage1R, g_AllowedSessions, 
+   g_ActiveSessionName, g_MaxTradeSession,
+   g_UtcOffsetMinutes,
+   g_OffsetCalibrated); 
          
       FileWrite(handle, data);
       FileClose(handle);
@@ -601,16 +725,28 @@ void LoadConfigOffline(){
          // FIX 2: Split by ^ to match the Save function
          StringSplit(data, '^', parts);
          
-         if(ArraySize(parts) >= 6)
+         if(ArraySize(parts) >= 10)
          {
-            g_SessionActive = (bool)StringToInteger(parts[0]);
+            //g_SessionActive = (bool)StringToInteger(parts[0]);
             g_MaxTradesDaily =  (int)StringToInteger(parts[1]);
-            g_CurrentDailyTrades = (int)StringToInteger(parts[2]);
+            //g_CurrentDailyTrades = (int)StringToInteger(parts[2]);
             g_MaxLossPercent = StringToDouble(parts[3]);
             g_Manage1R = (bool)StringToInteger(parts[4]);
-            g_AllowedSessions = parts[5];
+            //g_AllowedSessions = parts[5];
+            
+            g_ActiveSessionName = parts[6];
+            g_MaxTradeSession = (int)StringToInteger(parts[7]);
+           // g_UtcOffsetMinutes = (int)StringToInteger(parts[8]);
+            //g_OffsetCalibrated = (bool)StringToInteger(parts[9]);
+           // if(g_OffsetCalibrated)
+                 // Print("SentriX: Restored calibrated offset from disk: ", 
+                            //  g_UtcOffsetMinutes, " min. C# not needed for time.");
+          // if(ArraySize(parts) >= 10)
+              // g_UtcOffsetMinutes = (int)StringToInteger(parts[8]); 
             
             Print(" SentriX: Loaded offline rules from local disk. Sessions: ", g_AllowedSessions);
+            //TriggerWindowsToast("Config Loaded","SentriX: Loaded offline rules from local disk.");
+            
          }
          FileClose(handle);
       }
@@ -680,3 +816,248 @@ void SyncOfflineEvents()
       }
    }
 }
+
+
+//+----------------------------------------------------------
+
+void TriggerMT5Alert(string message)
+{
+   Print("TriggerMT5Alert is triggered");
+   Alert("SentriX Alert: ", message);
+}
+
+void TriggerWindowsToast(string title, string message)
+{
+   // Formats a distinct string that your C# app can recognize and separate from standard logs
+   string toastCommand = "TOAST_NOTIFICATION|" + title + "|" + message;
+   
+   // We reuse your existing event queue system to send this instantly to C#
+   LogEvent(toastCommand);
+}
+//+-------------------------------------------------------
+
+void SaveStateOffline(){
+   int handle = FileOpen(STATE_FILE, FILE_WRITE | FILE_TXT | FILE_ANSI);
+   if(handle != INVALID_HANDLE){
+      MqlDateTime timeStruct;
+      TimeToStruct(TimeCurrent(),timeStruct);
+      int currentDay = timeStruct.day;
+      // Format: DailyTrades ^ SessionTrades ^ LastRecordedDay
+      //string data = StringFormat("%d^%d^%d", g_CurrentDailyTrades, g_CurrentSessionTrades, currentDay );
+      string data = StringFormat("%d^%d^%d^%d", g_CurrentDailyTrades, g_TradesLondon, g_TradesNewYork, currentDay);
+      FileWrite(handle, data);
+      FileClose(handle);
+   }
+}
+
+void LoadStateOffline(){
+   
+   if(FileIsExist(STATE_FILE))
+   {
+      int handle = FileOpen(STATE_FILE, FILE_READ | FILE_TXT|FILE_ANSI);
+      if(handle != INVALID_HANDLE)
+     {
+        string data = FileReadString(handle);
+        string parts[];
+        
+        StringSplit(data, '^', parts);
+         
+         // FIX 1: Expect 4 parts now (Daily, London, NY, Day)
+         if(ArraySize(parts) >= 4)
+         {
+            // FIX 2: The day is now at index 3
+            int savedDay   = (int)StringToInteger(parts[3]); 
+            
+            MqlDateTime timeStruct;
+            TimeToStruct(TimeCurrent(), timeStruct);
+            int currentDay = timeStruct.day;
+            
+            // If the day matches, load the counts. Otherwise, start fresh.
+            if(savedDay == currentDay)
+            {
+               g_CurrentDailyTrades = (int)StringToInteger(parts[0]);
+               g_TradesLondon       = (int)StringToInteger(parts[1]);
+               g_TradesNewYork      = (int)StringToInteger(parts[2]);
+               
+               Print("🛡️ SentriX State Loaded | Daily: ", g_CurrentDailyTrades, " | London: ", g_TradesLondon, " | NY: ", g_TradesNewYork);
+            }
+            else
+            {
+               Print("🛡️ SentriX State: New day detected on load. Resetting counters.");
+               g_CurrentDailyTrades = 0;
+               g_TradesLondon       = 0;
+               g_TradesNewYork      = 0;
+               SaveStateOffline();
+            }
+         }
+         FileClose(handle);
+      }
+   }
+}
+
+
+void CheckDailyReset()
+{
+   static int lastDay = -1; 
+   
+   // --- CORRECT MQL5 WAY TO GET THE CURRENT DAY ---
+   MqlDateTime timeStruct;
+   TimeToStruct(TimeCurrent(), timeStruct);
+   int currentDay = timeStruct.day; 
+   // -----------------------------------------------
+
+   if(lastDay != -1 && currentDay != lastDay)
+   {
+      Print("🛡️ SentriX Guardian: 🌅 New trading day detected. Resetting local MT5 counters.");
+      
+      g_CurrentDailyTrades = 0;
+      //g_CurrentSessionTrades = 0;
+      g_TradesLondon       = 0;
+      g_TradesNewYork      = 0;
+      
+      SaveStateOffline(); 
+   }
+   
+   lastDay = currentDay;
+}
+
+//+-------------------------------------------------------------
+
+
+
+
+
+
+
+
+//+-------------------------------------------------------------
+
+
+
+string GetActiveSession()
+{
+   datetime etTime = TimeEastern();
+   printf(etTime);
+   MqlDateTime etStruct;
+   TimeToStruct(etTime, etStruct);
+   
+   // Convert current ET time into total minutes for easy comparison
+   int currentMinutesET = (etStruct.hour * 60) + etStruct.min;
+   printf(currentMinutesET);
+   
+   // Rule 1: London Session (2:00 AM to 7:59 AM ET)
+   // 2:00 = 120 mins | 7:59 = 479 mins
+   if(currentMinutesET >= 120 && currentMinutesET < 480)
+   {
+      g_SessionActive = true;
+      printf("Current session name London");
+      return "London";
+      
+   }
+   
+   // Rule 2: New York Session (8:00 AM to 11:30 AM ET)
+   // 8:00 = 480 mins | 11:30 = 690 mins
+   if(currentMinutesET >= 480 && currentMinutesET <= 690)
+   {
+      g_SessionActive= true;
+      printf("Current Session Name NewYork");
+      return "NewYork"; // Matches your C# exact string
+      
+   }
+   
+   // Outside allowed hours
+   printf("outiside allowed hour");
+   g_SessionActive = false;
+   return "None";
+   
+}
+
+void CheckSession(string name, int startMin, int endMin, int nowMin,
+                  int &latestStart, string &selected)
+{
+   bool inside = false;
+
+   if(startMin <= endMin)
+      inside = (nowMin >= startMin && nowMin <= endMin);
+   else // overnight
+      inside = (nowMin >= startMin || nowMin <= endMin);
+
+   if(inside && startMin > latestStart)
+   {
+      latestStart = startMin;
+      selected    = name;
+   }
+}
+
+int GetLocalTimeMinutes()
+{
+   if(!g_OffsetCalibrated)
+   {
+      Print("SentriX WARNING: UTC offset not yet calibrated. Using broker time as fallback.");
+   }
+   
+   MqlDateTime t;
+   TimeToStruct(TimeCurrent(), t);
+   int brokerMinutes = t.hour * 60 + t.min;
+   
+   int localMinutes = brokerMinutes + g_UtcOffsetMinutes;
+   
+   if(localMinutes >= 1440) localMinutes -= 1440;
+   if(localMinutes < 0)     localMinutes += 1440;
+   
+   return localMinutes;
+}
+
+
+//+-------------------------------------------------------------
+
+datetime TimeEastern()
+{
+   datetime gmt = TimeGMT();
+   MqlDateTime dt;
+   TimeToStruct(gmt, dt);
+   
+   int offsetHours = -5; // Default to EST (UTC-5)
+   
+   // US DST Rule: Starts 2nd Sunday in March, Ends 1st Sunday in November
+   bool isDST = false;
+   
+   if(dt.mon > 3 && dt.mon < 11) 
+   {
+      isDST = true;
+   }
+   else if(dt.mon == 3) 
+   {
+      // March: Check if past 2nd Sunday
+      int previousSunday = dt.day - dt.day_of_week;
+      if(previousSunday >= 8) isDST = true; 
+   }
+   else if(dt.mon == 11) 
+   {
+      // November: Check if before 1st Sunday
+      int previousSunday = dt.day - dt.day_of_week;
+      if(previousSunday <= 0) isDST = true;
+   }
+   
+   if(isDST) offsetHours = -4; // Switch to EDT (UTC-4)
+   
+   return gmt + (offsetHours * 3600);
+}
+
+bool IsCurrentTimeAllowedWindow()
+{
+   string currentSession = GetActiveSession();
+   
+
+   
+   if(currentSession == "London" || currentSession == "NewYork")
+   {
+      return true;
+   }
+   
+   // We no longer need to check g_AllowedSessions from C#. 
+   // The EA is now autonomous regarding time.
+   return false; 
+}
+//+--------------------------------------------------------------
+

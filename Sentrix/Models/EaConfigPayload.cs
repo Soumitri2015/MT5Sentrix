@@ -21,6 +21,9 @@ namespace Sentrix.Models
         [JsonPropertyName("CurrentDailyTrades")]
         public int CurrentDailyTrades { get; set; }
 
+        [JsonPropertyName("CurrentSessionTrades")]
+        public int CurrentSessionTrades { get; set; }
+
         [JsonPropertyName("MaxLossPercent")]
         public double MaxLossPercent { get; set; }
 
@@ -29,5 +32,20 @@ namespace Sentrix.Models
 
         [JsonPropertyName("AllowedSession")]
         public string AllowedSession { get; set; }
+        [JsonPropertyName("UTCTimeOffsetHours")]
+        public int UTCTimeOffsetHours { get; set; }
+
+
+        [JsonPropertyName("LocalTimeHour")] 
+        public int LocalTimeHour { get; set; }
+
+        [JsonPropertyName("LocalTimeMinute")]
+        public int LocalTimeMinute { get; set; }
+        [JsonPropertyName("ActiveSessionName")]
+        public string ActiveSessionName { get; set; }
+        [JsonPropertyName("MaxTradesPerSession")]
+        public int MaxTradesPerSession { get; set; }
+
+
     }
 }

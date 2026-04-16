@@ -3,6 +3,7 @@ using Sentrix.Models;
 using Sentrix.Repositories;
 using System;
 using System.Collections.Generic;
+using System.Configuration;
 using System.Diagnostics;
 using System.Linq;
 using System.Text;
@@ -16,6 +17,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using MessageBox = System.Windows.MessageBox;
+using Sentrix.Properties;
 
 namespace Sentrix.UIPages
 {
@@ -31,6 +33,7 @@ namespace Sentrix.UIPages
         {
             InitializeComponent();
             _userRepository = userRepository;
+            LoadRememberedLogin();
         }
 
         private void ShowSignUp_Click(object sender, RoutedEventArgs e)
@@ -70,6 +73,20 @@ namespace Sentrix.UIPages
                         MessageBoxButton.OK, MessageBoxImage.Error);
                     return;
                 }
+
+                if(RememberMeCheckBox.IsChecked == true)
+                {
+                    Sentrix.Properties.Settings.Default.RememberMe = true;
+                    Sentrix.Properties.Settings.Default.SavedEmail = LoginEmail.Text;
+                    Sentrix.Properties.Settings.Default.SavedPassword = LoginPassword.Password;
+                }
+                else
+                {
+                    Sentrix.Properties.Settings.Default.RememberMe = false;
+                    Sentrix.Properties.Settings.Default.SavedEmail = "";
+                    Sentrix.Properties.Settings.Default.SavedPassword = "";
+                }
+                Sentrix.Properties.Settings.Default.Save();
 
 
                 MessageBox.Show($"Login attempted for: {LoginEmail.Text}", "Login",
@@ -155,6 +172,47 @@ namespace Sentrix.UIPages
             SignUpEmail.Clear();
             SignUpPassword.Clear();
             SignUpConfirmPassword.Clear();
+        }
+
+        // Replace all instances of 'Properties.Settings.Default' with 'ConfigurationManager.AppSettings'
+        // For example, update the LoadRememberedLogin method as follows:
+
+        private void LoadRememberedLogin()
+        {
+            try
+            {
+                if (!Sentrix.Properties. Settings.Default.RememberMe)
+                    return;
+
+                string savedEmail = Sentrix.Properties. Settings.Default.SavedEmail;
+                string savedPassword = Sentrix.Properties.Settings.Default.SavedPassword;
+
+                if (string.IsNullOrWhiteSpace(savedEmail) || string.IsNullOrWhiteSpace(savedPassword))
+                    return;
+
+                // Silent login with DB validation
+                var userId = _userRepository.GetUser(savedEmail, savedPassword);
+
+                if (userId == -1)
+                    return; // credentials invalid → show login screen
+
+                // Restore session
+                UserSession.SetUser(userId);
+                UserSession.SetUserRole(_userRepository.GetUserRoleById(userId));
+
+                // Open MainWindow directly
+                var mainWindow = ((App)System.Windows.Application.Current)
+                    .ServiceProvider.GetRequiredService<MainWindow>();
+
+                System.Windows.Application.Current.MainWindow = mainWindow;
+                mainWindow.Show();
+
+                this.Close(); // close login window
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("Auto login failed: " + ex.Message);
+            }
         }
     }
 }

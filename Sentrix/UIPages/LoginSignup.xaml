@@ -141,6 +141,7 @@
                               Style="{StaticResource ModernPasswordBox}"
                               Height="40"
                               Margin="0,0,0,8"/>
+                    
 
                     <!-- Forgot Password -->
                     <TextBlock HorizontalAlignment="Right" Margin="0,0,0,20">
@@ -148,6 +149,11 @@
                          <Run Text="Forgot Password?"/>
                      </Hyperlink>
                     </TextBlock>
+                    <CheckBox x:Name="RememberMeCheckBox"
+          Content="Remember me"
+          Margin="0,0,0,10"
+          FontSize="13"
+          Foreground="#2C3E50"/>
 
                     <!-- Sign In Button -->
                     <Button Content="Sign In"

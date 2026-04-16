@@ -164,10 +164,28 @@ namespace Sentrix
 
         [StructLayout(LayoutKind.Sequential)]
         public struct RECT { public int Left, Top, Right, Bottom; }
-       
+
         #endregion
-       
+
         #region Auto events
+
+        protected override void OnClosed(EventArgs e)
+        {
+            Debug.WriteLine("Sentrix shutting down: Cleaning up MT5 pipes...");
+
+            // 1. Fully disable the timer so it can't run another tick
+            if (foregroundCheckTimer != null)
+            {
+                foregroundCheckTimer.Change(System.Threading.Timeout.Infinite, System.Threading.Timeout.Infinite);
+                foregroundCheckTimer.Dispose();
+                foregroundCheckTimer = null;
+            }
+
+            // 2. Kill the named pipes gracefully
+            _mt5Service?.Stop();
+
+            base.OnClosed(e);
+        }
         protected override void OnClosing(CancelEventArgs e)
         {
 
@@ -179,15 +197,15 @@ namespace Sentrix
             {
                 e.Cancel = true;
                 Hide();
-                System.Windows.MessageBox.Show(
-                      "Access Denied: You do not have permission to stop the Sentrix .",
-                      "Sentrix Protection",
-                      MessageBoxButton.OK,
-                      MessageBoxImage.Stop);
+                //System.Windows.MessageBox.Show(
+                //      "Access Denied: You do not have permission to stop the Sentrix .",
+                //      "Sentrix Protection",
+                //      MessageBoxButton.OK,
+                //      MessageBoxImage.Stop);
                 return;
             }
 
-            trayIcon?.Dispose();
+            //trayIcon?.Dispose();
             base.OnClosing(e);
         }
         
@@ -253,7 +271,7 @@ namespace Sentrix
 
             InitialiseAutoAttach();
             initialiseMT5Service();
-            SetupTrayIcon();
+           // SetupTrayIcon();
         }
         #endregion
 
@@ -593,8 +611,8 @@ namespace Sentrix
 
                     string exePath = MT5AutoAttachService.GetMT5ExePath(validProcess);
                     _mT5AutoAttachService.EnsureEAAttached(validProcess, exePath);
-                    //if (!_mt5Service.IsConnected)
-                    //    _mt5Service.Restart();
+                    if (!_mt5Service.IsConnected)
+                        _mt5Service.Restart();
 
                     Dispatcher.Invoke(async () =>
                     {
@@ -697,7 +715,8 @@ namespace Sentrix
                 }
                 int currentPositionCount = positions.Count;
                 var sessionTimeService = new TradingSessionTimeService(_config);
-                string activeSessionName = sessionTimeService.GetActiveSession(DateTime.UtcNow);
+                string activeSessionName = await sessionTimeService.GetActiveSession(DateTime.UtcNow);
+                if (activeSessionName != null) { Debug.WriteLine($"active session name {activeSessionName}"); }
                 if (positions.Count > 0)
                 {
                     Debug.WriteLine($"[TRACER 2] UI Received trade. Current Active Session is: '{activeSessionName}'");
@@ -709,12 +728,39 @@ namespace Sentrix
                 UpdateSettingsButtonState();
 
                 // Detect Session Change
-                if (!string.IsNullOrEmpty(activeSessionName) && activeSessionName != _currentSession)
-                {
-                    _currentSession = activeSessionName;
-                    await  RegisterSession(activeSessionName);
+                //if (!string.IsNullOrEmpty(activeSessionName) && activeSessionName != _currentSession)
+                //{
+                //    _currentSession = activeSessionName;
+                //    await  RegisterSession(activeSessionName);
 
-                    SendConfigToEA();
+                //    SendConfigToEA();
+                //}
+                //else
+                //{
+                //    _currentSession = "OffSession";
+                //    Debug.WriteLine("No active session detected. Marking as OffSession.");
+                //}
+
+                if (!string.IsNullOrEmpty(activeSessionName))
+                {
+                    // A session is active. Check if it's different from our recorded state.
+                    if (activeSessionName != _currentSession)
+                    {
+                        _currentSession = activeSessionName;
+                        await RegisterSession(activeSessionName);
+                        SendConfigToEA();
+                    }
+                }
+                else
+                {
+                    if (_currentSession != "OffSession")
+                    {
+                        _currentSession = "OffSession";
+                        Debug.WriteLine("No active session detected. Marking as OffSession.");
+
+                        // You might also want to call SendConfigToEA() here so the EA knows to lock trades!
+                        SendConfigToEA();
+                    }
                 }
 
                 HandleTradeSessionDayReset(currentPositionCount);
@@ -1242,38 +1288,38 @@ namespace Sentrix
 
 
 
-        private void SetupTrayIcon()
-        {
-            trayIcon = new System.Windows.Forms.NotifyIcon();
+        //private void SetupTrayIcon()
+        //{
+        //    trayIcon = new System.Windows.Forms.NotifyIcon();
 
-            trayIcon.Icon = SystemIcons.Shield;
-            trayIcon.Text = "SentriX Guardian";
-            trayIcon.Visible = true;
+        //    trayIcon.Icon = SystemIcons.Shield;
+        //    trayIcon.Text = "SentriX Guardian";
+        //    trayIcon.Visible = true;
 
-            var menu = new System.Windows.Forms.ContextMenuStrip();
+        //    var menu = new System.Windows.Forms.ContextMenuStrip();
 
-            menu.Items.Add("Open", null, (s, e) =>
-            {
-                Dispatcher.Invoke(() =>
-                {
-                    Show();
-                    WindowState = WindowState.Normal;
-                    Activate();
-                });
-            });
+        //    menu.Items.Add("Open", null, (s, e) =>
+        //    {
+        //        Dispatcher.Invoke(() =>
+        //        {
+        //            Show();
+        //            WindowState = WindowState.Normal;
+        //            Activate();
+        //        });
+        //    });
 
-            trayIcon.ContextMenuStrip = menu;
+        //    trayIcon.ContextMenuStrip = menu;
 
-            trayIcon.DoubleClick += (s, e) =>
-            {
-                Dispatcher.Invoke(() =>
-                {
-                    Show();
-                    WindowState = WindowState.Normal;
-                    Activate();
-                });
-            };
-        }
+        //    trayIcon.DoubleClick += (s, e) =>
+        //    {
+        //        Dispatcher.Invoke(() =>
+        //        {
+        //            Show();
+        //            WindowState = WindowState.Normal;
+        //            Activate();
+        //        });
+        //    };
+        //}
 
         private void PositionControllerBottomRight()
         {
@@ -1650,23 +1696,33 @@ namespace Sentrix
             BlockClicksBtn.Content = "Block Clicks";
         }
 
-
+        
         private void SendConfigToEA()
         {
+
             if(!_mt5Service.IsConnected || _config == null) return;
 
             bool isTimeAllowed = _tradingSessioinTimeService.IsTradingAllowed(_currentSession, DateTime.Now);
             bool isSessionActive = isTimeAllowed && !_isManualBlockActive;
+            int localHour = DateTime.Now.Hour;
+            int localMinute = DateTime.Now.Minute;
+
+
+            // Add to payload
+
+
+            int utcOffsetHours = (int)TimeZoneInfo.Local.GetUtcOffset(DateTime.UtcNow).TotalHours;
 
             List<string> sessionWindows = new List<string>();
 
             if(_config.TradingSessions != null)
             {
-                foreach (var kv in _config.TradingSessions.Values)
+                foreach (var kv in _config.TradingSessions)
                 {
-                    foreach(var window in kv)
+                    string sesssionName = kv.Key;
+                    foreach (var window in kv.Value)
                     {
-                        sessionWindows.Add($"{window.StartTime}-{window.EndTime}");
+                        sessionWindows.Add($"{sesssionName}:{window.StartTime}-{window.EndTime}");
                     }
                 }
             }
@@ -1680,8 +1736,19 @@ namespace Sentrix
                 MaxTradesDaily = _config.MaxTradesPerDay,
                 CurrentDailyTrades = _tradesToday,
                 MaxLossPercent = _config.LossPercentValue,
+                CurrentSessionTrades = !string.IsNullOrEmpty(_currentSession) && _sessionToday.ContainsKey(_currentSession)
+                                        ? _sessionToday[_currentSession].Trades
+                                        : 0,
                 Manage1R = true ,
-                AllowedSession = flattendSessions
+                AllowedSession = flattendSessions,
+                MaxTradesPerSession = _config.MaxTradesPerSession,
+                 
+
+                /* UTCTimeOffsetHours = utcOffsetHours,
+                 LocalTimeHour = localHour,
+                 LocalTimeMinute = localMinute,*/
+                //ActiveSessionName = _currentSession ?? "None",
+
             };
 
             string json = JsonSerializer.Serialize(payload);

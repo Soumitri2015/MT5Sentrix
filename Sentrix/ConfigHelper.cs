@@ -57,17 +57,17 @@ namespace Sentrix
             return new AppConfigData
             {
                 MaxTradesPerDay = int.Parse(
-            ConfigurationManager.AppSettings["MaxTradesPerDay"] ?? "10"),
+            ConfigurationManager.AppSettings["MaxTradesPerDay"] ?? "7"),
 
 
                 LockMessage =
             ConfigurationManager.AppSettings["LockMessage"] ?? "System Locked",
 
                 MaxTradesPerSession = int.Parse(
-            ConfigurationManager.AppSettings["MaxTradesPerSession"] ?? "2"),
+            ConfigurationManager.AppSettings["MaxTradesPerSession"] ?? "3"),
 
                 LossPercentValue = double.Parse(
-            ConfigurationManager.AppSettings["LossPercentValue"] ?? "10"),
+            ConfigurationManager.AppSettings["LossPercentValue"] ?? "1"),
                 CloseTradesOutsideSession = bool.Parse(ConfigurationManager.AppSettings["CloseTradesOutsideSession"] ?? "false"),
                 TradingSessions = new Dictionary<string, List<TimeWindow>>
         {
