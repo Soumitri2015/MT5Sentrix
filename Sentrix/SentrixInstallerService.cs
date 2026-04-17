@@ -155,6 +155,8 @@ namespace Sentrix
                 string templateFolder = Path.Combine(mt5DataPath, "MQL5", "Profiles", "Templates");
                 Directory.CreateDirectory(expertsFolder);
                 Directory.CreateDirectory(templateFolder);
+                string servicesFolder = Path.Combine(mt5DataPath, "MQL5", "Services");
+                Directory.CreateDirectory(servicesFolder);
 
                 // CHANGE 1: Use the .ex5 extension for the destination file
                 string destPath = Path.Combine(expertsFolder, "SentriXBridge.ex5");
@@ -164,9 +166,12 @@ namespace Sentrix
                 // Ensure your namespace exactly matches your project's structure
                 ExtractEmbeddedResource("Sentrix.Resources.SentriXBridge.ex5", destPath);
 
+                //ExtractEmbeddedResource(
+                //            "Sentrix.Resources.SentrixInstaller.ex5",
+                //            Path.Combine(expertsFolder, "SentriXInstaller.ex5"));
                 ExtractEmbeddedResource(
-                            "Sentrix.Resources.SentrixInstaller.ex5",
-                            Path.Combine(expertsFolder, "SentriXInstaller.ex5"));
+                    "Sentrix.Resources.SentrixInstaller.ex5",
+                    Path.Combine(servicesFolder, "SentriXInstaller.ex5"));
 
                 ExtractEmbeddedResource(
                             "Sentrix.Resources.SentrixBridge_tp.tpl",
