@@ -189,7 +189,7 @@ namespace Sentrix
             }
 
             // Return null (or "None") if outside allowed trading hours
-            return "Frankfurt";
+            return "Outside Allowed Session";
         }
 
         public bool IsWithMasterESTWindow()
