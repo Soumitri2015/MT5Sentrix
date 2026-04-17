@@ -89,8 +89,8 @@ namespace Sentrix.UIPages
                 Sentrix.Properties.Settings.Default.Save();
 
 
-                MessageBox.Show($"Login attempted for: {LoginEmail.Text}", "Login",
-                    MessageBoxButton.OK, MessageBoxImage.Information);
+               // MessageBox.Show($"Login attempted for: {LoginEmail.Text}", "Login",
+                   // MessageBoxButton.OK, MessageBoxImage.Information);
 
                 UserSession.SetUser(userId);
                 UserSession.SetUserRole(_userRepository.GetUserRoleById(userId));

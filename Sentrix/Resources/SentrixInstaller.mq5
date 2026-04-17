@@ -1,3 +1,5 @@
+// 1. THIS MUST BE A SERVICE TO RUN FOREVER IN THE BACKGROUND
+#property service 
 #property strict
 
 #define SERVICE_CHART_NAME "SENTRIX_BRIDGE_SERVICE"
@@ -5,48 +7,28 @@
 
 long FindServiceChart()
 {
+   // 2. MUST CHECK COMMENT, NOT INDICATORS
    for(long chart=ChartFirst(); chart>=0; chart=ChartNext(chart))
-      if(ChartIndicatorsTotal(chart, 0) > 0)
+   {
+      if(ChartGetString(chart, CHART_COMMENT) == SERVICE_CHART_NAME)
          return chart;
-         
-         //if(ChartGetString(chart, CHART_COMMENT) == SERVICE_CHART_NAME)
+   }
    return -1;
 }
 
-long CreateServiceChart()
+void NormalizeChart(long chart)
 {
-   Print("Creating SentriX service chart...");
+   ChartSetInteger(chart, CHART_SHOW_GRID, true);
+   ChartSetInteger(chart, CHART_AUTOSCROLL, true);
+   ChartSetInteger(chart, CHART_SHIFT, true);
 
-   long originalChart = ChartID();
-   
-   long firstChart=ChartFirst();
-   
-   if(firstChart > 0)
-      return firstChart;
-
-   // 2. Open the new chart (MT5 will force this to the front)
-   long chart = ChartOpen("EURUSD", PERIOD_M1);
-   if(chart == 0)
-   {
-      Print("Failed to open chart");
-      return -1;
-   }
-
-   Sleep(2000); // wait until MT5 fully creates chart
-
-   for(long chart=ChartFirst(); chart>=0; chart=ChartNext(chart))
-      // 3. Force the original chart back to the front so the user isn't interrupted
-      ChartSetInteger(chart, CHART_BRING_TO_TOP, true);
-      
-   ChartSetInteger(originalChart, CHART_BRING_TO_TOP, true);
-
-   Print("Service chart ready");
-   return chart;
+   ChartNavigate(chart, CHART_END);
+   ChartRedraw(chart);
 }
 
 void AttachBridgeToChart(long chart)
 {
-   Print("Applying template to service chart...");
+   Print("SentriX Service: Applying template to hijacked chart...");
 
    ResetLastError();
    bool ok = ChartApplyTemplate(chart, TEMPLATE_NAME);
@@ -62,59 +44,47 @@ void AttachBridgeToChart(long chart)
 void DeployBridge()
 {
    long chart = FindServiceChart();
+   
    if(chart == -1)
-      chart = CreateServiceChart();
-
-   if(chart != -1)
-      AttachBridgeToChart(chart);
+   {
+      // Find the very first chart the user has open
+      long firstChart = ChartFirst();
+      
+      // ONLY attach if they actually have a chart open!
+      if(firstChart >= 0)
+      {
+         AttachBridgeToChart(firstChart);
+      }
+      // If no charts are open, do absolutely nothing.
+   }
 }
 
 void EnsureBridgeAlive()
 {
    long chart = FindServiceChart();
-
+   
    if(chart == -1)
    {
-      Print("Service chart missing → restoring");
+      // No log spam here! Just silently try to deploy.
       DeployBridge();
-      return;
-   }
-
-   if(ChartIndicatorsTotal(chart, 0) == 0)
-   {
-      Print("Bridge missing → redeploying");
-      AttachBridgeToChart(chart);
    }
 }
 
-int OnInit()
+// 3. SERVICES USE OnStart(), NOT OnInit()
+void OnStart()
 {
-   Print("SentriX Installer started");
+   Print("🛡️ SentriX Predator Watchdog Started (Background Service).");
 
    Sleep(5000); // MT5 startup delay
-   DeployBridge();
-   EventSetTimer(5);
 
-   return(INIT_SUCCEEDED);
-}
-
-void OnTimer()
-{
-   EnsureBridgeAlive();
-}
-
-void OnDeinit(const int reason)
-{
-   EventKillTimer();
-}
-
-void NormalizeChart(long chart)
-{
-   //ChartSetInteger(chart, CHART_SHOW_CANDLES, true);
-   ChartSetInteger(chart, CHART_SHOW_GRID, true);
-   ChartSetInteger(chart, CHART_AUTOSCROLL, true);
-   ChartSetInteger(chart, CHART_SHIFT, true);
-
-   ChartNavigate(chart, CHART_END);
-   ChartRedraw(chart);
+   // Infinite loop that runs until MT5 is closed
+   while(!IsStopped())
+   {
+      EnsureBridgeAlive();
+      
+      // Check every 2 seconds
+      Sleep(2000); 
+   }
+   
+   Print("SentriX Watchdog Stopped.");
 }
