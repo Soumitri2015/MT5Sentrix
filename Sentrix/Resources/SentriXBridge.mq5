@@ -95,6 +95,7 @@ void OnDeinit(const int reason)
    EventKillTimer();
    if(g_pipe    != INVALID_HANDLE) { FileClose(g_pipe);    g_pipe    = INVALID_HANDLE; }
    if(g_cmdPipe != INVALID_HANDLE) { FileClose(g_cmdPipe); g_cmdPipe = INVALID_HANDLE; }
+   ChartSetString(0, CHART_COMMENT, "");
    Print("SentriXBridge: stopped.");
 }
 
@@ -733,7 +734,7 @@ void LoadConfigOffline(){
             //g_CurrentDailyTrades = (int)StringToInteger(parts[2]);
             g_MaxLossPercent = StringToDouble(parts[3]);
             g_Manage1R = (bool)StringToInteger(parts[4]);
-            //g_AllowedSessions = parts[5];
+            g_AllowedSessions = parts[5];
             
             g_ActiveSessionName = parts[6];
             g_MaxTradeSession = (int)StringToInteger(parts[7]);
@@ -1047,17 +1048,54 @@ datetime TimeEastern()
 
 bool IsCurrentTimeAllowedWindow()
 {
-   string currentSession = GetActiveSession();
+   // If no sessions are configured, block trading
+   if(StringLen(g_AllowedSessions) == 0 || g_AllowedSessions == "None") 
+      return false; 
+      
+   int currentMin = GetLocalTimeMinutes();
+   string sessions[];
    
-
+   // Split by the pipe character (e.g., london:11:30-12:55 | newyork:15:56-14:30)
+   int count = StringSplit(g_AllowedSessions, '|', sessions);
    
-   if(currentSession == "London" || currentSession == "NewYork")
+   for(int i = 0; i < count; i++)
    {
-      return true;
+      int firstColon = StringFind(sessions[i], ":");
+      if(firstColon < 0) continue;
+      
+      string times = StringSubstr(sessions[i], firstColon + 1); // Extract "11:30-12:55"
+      int dashPos = StringFind(times, "-");
+      if(dashPos < 0) continue;
+      
+      string startStr = StringSubstr(times, 0, dashPos); // Extract "11:30"
+      string endStr   = StringSubstr(times, dashPos + 1); // Extract "12:55"
+      
+      int startColon = StringFind(startStr, ":");
+      int endColon   = StringFind(endStr, ":");
+      
+      if(startColon < 0 || endColon < 0) continue;
+      
+      // Convert HH:mm to absolute minutes
+      int startTotal = (int)StringToInteger(StringSubstr(startStr, 0, startColon)) * 60 + 
+                       (int)StringToInteger(StringSubstr(startStr, startColon + 1));
+                       
+      int endTotal   = (int)StringToInteger(StringSubstr(endStr, 0, endColon)) * 60 + 
+                       (int)StringToInteger(StringSubstr(endStr, endColon + 1));
+      
+      // Check if current time falls within this window
+      if(startTotal <= endTotal)
+      {
+         // Standard daytime session
+         if(currentMin >= startTotal && currentMin <= endTotal) return true;
+      }
+      else
+      {
+         // Midnight cross session (starts before midnight, ends the next day)
+         if(currentMin >= startTotal || currentMin <= endTotal) return true;
+      }
    }
    
-   // We no longer need to check g_AllowedSessions from C#. 
-   // The EA is now autonomous regarding time.
+   // If the loop finishes and no window matched the current time, block it
    return false; 
 }
 //+--------------------------------------------------------------
