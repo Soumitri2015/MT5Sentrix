@@ -58,7 +58,7 @@ int OnInit()
      //    return(INIT_FAILED);
    //}
    ChartSetString(0, CHART_COMMENT, "SENTRIX_BRIDGE_SERVICE");
-   ChartSetInteger(0, CHART_SHOW, false);
+   ChartSetInteger(0, CHART_SHOW, true);
    Print("SentriXBridge: starting...");
    EventSetMillisecondTimer(INTERVAL_MS);
    
@@ -455,6 +455,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
                      Sleep(10); 
                   }
                   
+                  printf("Close" + trans.position);
                   // 3. Close it instantly
                   ClosePositionByTicket(trans.position);
                   PushDataToCSharp(); 

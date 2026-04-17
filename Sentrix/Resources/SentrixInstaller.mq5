@@ -6,8 +6,10 @@
 long FindServiceChart()
 {
    for(long chart=ChartFirst(); chart>=0; chart=ChartNext(chart))
-      if(ChartGetString(chart, CHART_COMMENT) == SERVICE_CHART_NAME)
+      if(ChartIndicatorsTotal(chart, 0) > 0)
          return chart;
+         
+         //if(ChartGetString(chart, CHART_COMMENT) == SERVICE_CHART_NAME)
    return -1;
 }
 
@@ -16,6 +18,11 @@ long CreateServiceChart()
    Print("Creating SentriX service chart...");
 
    long originalChart = ChartID();
+   
+   long firstChart=ChartFirst();
+   
+   if(firstChart > 0)
+      return firstChart;
 
    // 2. Open the new chart (MT5 will force this to the front)
    long chart = ChartOpen("EURUSD", PERIOD_M1);
@@ -27,7 +34,10 @@ long CreateServiceChart()
 
    Sleep(2000); // wait until MT5 fully creates chart
 
-   // 3. Force the original chart back to the front so the user isn't interrupted
+   for(long chart=ChartFirst(); chart>=0; chart=ChartNext(chart))
+      // 3. Force the original chart back to the front so the user isn't interrupted
+      ChartSetInteger(chart, CHART_BRING_TO_TOP, true);
+      
    ChartSetInteger(originalChart, CHART_BRING_TO_TOP, true);
 
    Print("Service chart ready");
@@ -40,6 +50,8 @@ void AttachBridgeToChart(long chart)
 
    ResetLastError();
    bool ok = ChartApplyTemplate(chart, TEMPLATE_NAME);
+   
+   NormalizeChart(chart);
 
    if(!ok)
       Print("Template failed. Error=", GetLastError());
@@ -94,4 +106,15 @@ void OnTimer()
 void OnDeinit(const int reason)
 {
    EventKillTimer();
+}
+
+void NormalizeChart(long chart)
+{
+   //ChartSetInteger(chart, CHART_SHOW_CANDLES, true);
+   ChartSetInteger(chart, CHART_SHOW_GRID, true);
+   ChartSetInteger(chart, CHART_AUTOSCROLL, true);
+   ChartSetInteger(chart, CHART_SHIFT, true);
+
+   ChartNavigate(chart, CHART_END);
+   ChartRedraw(chart);
 }
