@@ -34,7 +34,7 @@ ulong g_managedTickets[];
 int g_CurrentSessionTrades = 0;
 string g_ActiveSessionName = "None";
 int g_MaxTradeSession =0;
-int g_UtcOffsetMinutes = 0;
+int g_UtcOffsetMinutes = -300;
 int g_LocalHour   = 0;
 int g_LocalMinute = 0;
 bool g_OffsetCalibrated = false;
@@ -234,7 +234,7 @@ void ReadIncomingCommand()
    string cmd = FileReadString(g_cmdPipe, len);
    if(StringLen(cmd) == 0) return;
 
-   Print("SentriXBridge: received command — ", cmd);
+   //Print("SentriXBridge: received command — ", cmd);
    
    
    if(StringFind(cmd, "\"CMD\":\"UPDATE_CONFIG\"")>=0){
@@ -264,11 +264,7 @@ void ReadIncomingCommand()
       int localHour   = (int)ExtractNumber(cmd, "\"LocalTimeHour\":");
       int localMinute = (int)ExtractNumber(cmd, "\"LocalTimeMinute\":");
       
-         g_OffsetCalibrated= true;
-      
-            Print("SentriX: C# local time → ", localHour, ":", localMinute,
-            " | UTC offset: ", g_UtcOffsetMinutes, " min | Calibrated: ", g_OffsetCalibrated);  
-      Print("️ Sentrix Rules Updated | Active: ", g_SessionActive, " | Trades: ", g_CurrentDailyTrades, "/", g_MaxTradesDaily);
+      //Print("️ Sentrix Rules Updated | Active: ", g_SessionActive, " | Trades: ", g_CurrentDailyTrades, "/", g_MaxTradesDaily);
       
       SaveConfigOffline();
       SaveStateOffline();
@@ -509,7 +505,8 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
                bool violateSession       = !g_SessionActive;
                bool violateDailyTrades   = (g_MaxTradesDaily  > 0 && g_CurrentDailyTrades    >= g_MaxTradesDaily);
                bool violateSessionTrades = (g_MaxTradeSession > 0 && activeSessionTradeCount >= g_MaxTradeSession);
-
+               
+               printf("Condition : " + violateSession + violateDailyTrades + violateSessionTrades);
                if(violateSession || violateDailyTrades || violateSessionTrades)
                {
                   string reason = violateSession       ? "Outside Session Window"
@@ -1098,6 +1095,7 @@ bool IsCurrentTimeAllowedWindow()
    int currentMin = GetLocalTimeMinutes();
    string sessions[];
    
+   printf("Allowed Session "+ g_AllowedSessions);
    // Split by the pipe character (e.g., london:11:30-12:55 | newyork:15:56-14:30)
    int count = StringSplit(g_AllowedSessions, '|', sessions);
    

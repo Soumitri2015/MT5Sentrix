@@ -229,7 +229,7 @@ namespace Sentrix
             }
             catch (Exception ex)
             {
-                System.Windows.MessageBox.Show("Failed to initialize components:\n" + ex.Message);
+                //System.Windows.MessageBox.Show("Failed to initialize components:\n" + ex.Message);
             }
 
             _configHelper = helper;
@@ -388,10 +388,10 @@ namespace Sentrix
         {
             if (!SettingsBtn.IsEnabled)
             {
-                System.Windows.MessageBox.Show("Settings cannot be opened while outside of time window.",
-                    "Session Active",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning);
+                //System.Windows.MessageBox.Show("Settings cannot be opened while outside of time window.",
+                //    "Session Active",
+                //    MessageBoxButton.OK,
+                //    MessageBoxImage.Warning);
                 return;
             }
 
@@ -442,7 +442,7 @@ namespace Sentrix
             catch (Exception ex)
             {
 
-                System.Windows.MessageBox.Show("Failed to close cTrader:\n" + ex.Message);
+                //System.Windows.MessageBox.Show("Failed to close cTrader:\n" + ex.Message);
             }
         }
 
@@ -516,7 +516,7 @@ namespace Sentrix
         {
             if (targetHandle == IntPtr.Zero)
             {
-                System.Windows.MessageBox.Show("Attach to a target window first.");
+                //System.Windows.MessageBox.Show("Attach to a target window first.");
                 return false;
             }
             return true;
@@ -933,7 +933,7 @@ namespace Sentrix
             }
             catch (Exception ex)
             {
-                System.Windows.MessageBox.Show($"Error saving daily data: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                //System.Windows.MessageBox.Show($"Error saving daily data: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
         TradeEntry ParseTrade(string row)

@@ -40,7 +40,7 @@ namespace Sentrix.Repositories
                     await _context.Positions.AddAsync(position);
                     await _context.SaveChangesAsync();
 
-                    AlertService.Show("Saved", $"New position added: {position.Symbol} at {position.EntryPrice}");
+                    //AlertService.Show("Saved", $"New position added: {position.Symbol} at {position.EntryPrice}");
                 }
             }
             catch (Exception ex)
