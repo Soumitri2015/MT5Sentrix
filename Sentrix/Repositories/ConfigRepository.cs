@@ -57,7 +57,7 @@ namespace Sentrix.Repositories
                 {
                     var grouped = windows.GroupBy(x => x.SessionName);
 
-                    foreach (var group in grouped)
+                    foreach (var group in grouped) 
                     {
                         var normalizedKey = AlertService.NormaliZeSession(group.Key);
                         var timeWindows = group.Select(x => new TimeWindow

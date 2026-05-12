@@ -202,12 +202,10 @@ namespace Sentrix
 
                 DateTime estTime = TimeZoneInfo.ConvertTimeFromUtc(utcNow, estZone);
 
-                
-
                 TimeSpan startTime = new TimeSpan(2, 0, 0); // 1:00 PM EST
                 TimeSpan endTime = new TimeSpan(11, 30, 0); // 10:00 PM EST
 
-                return estTime.TimeOfDay >= startTime && estTime.TimeOfDay <= endTime;
+                return !(estTime.TimeOfDay >= startTime && estTime.TimeOfDay <= endTime);
             }
             catch (Exception ex)
             {

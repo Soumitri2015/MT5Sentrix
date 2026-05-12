@@ -51,6 +51,7 @@ namespace Sentrix
             services.AddScoped<AlertService>();
             services.AddTransient<AdminPanelWindow>();
             services.AddTransient<LoginSignup>();
+            services.AddTransient<ConfigEditorWindow>();
 
             services.AddScoped<PositionRepository>();
             services.AddSingleton<MainWindow>();
