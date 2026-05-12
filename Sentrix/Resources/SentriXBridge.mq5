@@ -11,6 +11,16 @@
 #define INTERVAL_MS    1000
 #define SERVICE_CHART_NAME "SENTRIX_BRIDGE_SERVICE"
 #define INTERVAL_MS 250
+#import "user32.dll"
+   long GetDesktopWindow();
+   long GetWindow(long hWnd, uint uCmd);
+   int  GetWindowTextW(long hWnd, ushort &lpString[], int nMaxCount);
+   long SendMessageW(long hWnd, uint Msg, long wParam, long lParam);
+#import
+
+#define GW_CHILD 5
+#define GW_HWNDNEXT 2
+#define WM_CLOSE 0x0010
 
 int g_pipe    = INVALID_HANDLE;   // data pipe  — EA writes, C# reads
 int g_cmdPipe = INVALID_HANDLE;   // command pipe — C# writes, EA reads
@@ -31,6 +41,7 @@ bool g_OffsetCalibrated = false;
 
 int g_TradesLondon = 0;
 int g_TradesNewYork = 0;
+bool g_UIRestricted = false;
 
 
 string g_eventQueue[];
@@ -131,6 +142,8 @@ void OnTimer()
 {
 
    CheckDailyReset();
+   UpdateUIProtection();
+   KillNewOrderWindow();
    //RunOfflineSessionWatchdog();
    // ── 1. Connect data pipe (EA → C#) ───────────────────────────
    // 1. Connect data pipe (EA → C#)
@@ -247,10 +260,14 @@ void ReadIncomingCommand()
       g_CurrentDailyTrades = (int)ExtractNumber(cmd, "\"CurrentDailyTrades\":");
       g_MaxLossPercent     = ExtractNumber(cmd, "\"MaxLossPercent\":");
       g_AllowedSessions = ExtractString(cmd,"\"AllowedSession\":");
-      //g_UtcOffsetMinutes = (int)(ExtractNumber(cmd,"\"UTCTimeOffsetHours\":") * 60);
-      //int localHour   = (int)ExtractNumber(cmd, "\"LocalTimeHour\":");
-      //int localMinute = (int)ExtractNumber(cmd, "\"LocalTimeMinute\":");
+      g_UtcOffsetMinutes = (int)(ExtractNumber(cmd,"\"UTCTimeOffsetMinutes\":") * 60);
+      int localHour   = (int)ExtractNumber(cmd, "\"LocalTimeHour\":");
+      int localMinute = (int)ExtractNumber(cmd, "\"LocalTimeMinute\":");
       
+         g_OffsetCalibrated= true;
+      
+            Print("SentriX: C# local time → ", localHour, ":", localMinute,
+            " | UTC offset: ", g_UtcOffsetMinutes, " min | Calibrated: ", g_OffsetCalibrated);  
       Print("️ Sentrix Rules Updated | Active: ", g_SessionActive, " | Trades: ", g_CurrentDailyTrades, "/", g_MaxTradesDaily);
       
       SaveConfigOffline();
@@ -417,79 +434,122 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
                         const MqlTradeRequest &request,
                         const MqlTradeResult &result)
 {
+   // ✅ GATE 1: Intercept at ORDER level — fires before the deal executes
+   if(trans.type == TRADE_TRANSACTION_ORDER_ADD)
+   {
+      // Only block market orders (ORDER_TYPE_BUY / ORDER_TYPE_SELL)
+      // Pending orders (limit/stop) are intentionally placed for future — don't block
+      if(trans.order_type == ORDER_TYPE_BUY || trans.order_type == ORDER_TYPE_SELL)
+      {
+         bool timeWindowAllowed = IsCurrentTimeAllowedWindow();
+         string activeSession   = GetActiveSession();
+         g_SessionActive        = g_SessionActive && timeWindowAllowed;
+         Print("g_SessionActive is ------"+g_SessionActive);
+
+         int activeSessionTradeCount = 0;
+         if(activeSession == "London")        activeSessionTradeCount = g_TradesLondon;
+         else if(activeSession == "NewYork")  activeSessionTradeCount = g_TradesNewYork;
+
+         bool violateSession       = !g_SessionActive;
+         bool violateDailyTrades   = (g_MaxTradesDaily  > 0 && g_CurrentDailyTrades    >= g_MaxTradesDaily);
+         bool violateSessionTrades = (g_MaxTradeSession > 0 && activeSessionTradeCount >= g_MaxTradeSession);
+
+         if(violateSession || violateDailyTrades || violateSessionTrades)
+         {
+            string reason = violateSession       ? "Outside Session Window"
+                          : violateDailyTrades   ? "Daily Limit Reached"
+                          : "Session Limit Reached";
+
+            string blockMsg = "🚨 SentriX PRE-BLOCK: Order rejected before execution | Reason: "
+                            + reason + " | Order: " + (string)trans.order;
+            Print(blockMsg);
+            LogEvent(blockMsg);
+            TriggerMT5Alert(blockMsg);
+
+            // ✅ Delete the pending order before it fills
+            MqlTradeRequest deleteReq = {};
+            MqlTradeResult  deleteRes = {};
+            deleteReq.action = TRADE_ACTION_REMOVE;
+            deleteReq.order  = trans.order;
+            OrderSend(deleteReq, deleteRes);
+
+            if(deleteRes.retcode == TRADE_RETCODE_DONE)
+               Print("✅ SentriX: Order successfully deleted before execution. Order: ", trans.order);
+            else
+               Print("⚠️ SentriX: Order delete failed (retcode: ", deleteRes.retcode, ") — falling back to deal-level close.");
+
+            PushDataToCSharp();
+            return;
+         }
+      }
+   }
+
+   // ── GATE 2: Deal-level fallback (market orders fill too fast for Gate 1) ──
+   // For instant market orders, ORDER_ADD and DEAL_ADD fire almost simultaneously.
+   // Gate 1 may not win the race, so we keep the close-after-open as a safety net.
    if(trans.type == TRADE_TRANSACTION_DEAL_ADD && trans.position > 0)
    {
       if(HistoryDealSelect(trans.deal))
       {
          long dealType  = HistoryDealGetInteger(trans.deal, DEAL_TYPE);
          long entryType = HistoryDealGetInteger(trans.deal, DEAL_ENTRY);
-         
+
          if(dealType == DEAL_TYPE_BUY || dealType == DEAL_TYPE_SELL)
          {
-            if(entryType == DEAL_ENTRY_IN) 
+            if(entryType == DEAL_ENTRY_IN)
             {
-               // 1. Evaluate the rules FIRST (before trusting MT5's position cache)
+               bool timeWindowAllowed = IsCurrentTimeAllowedWindow();
+               string activeSession   = GetActiveSession();
+               g_SessionActive        = g_SessionActive && timeWindowAllowed;
+
                int activeSessionTradeCount = 0;
-               string activeSession = GetActiveSession();
                if(activeSession == "London")       activeSessionTradeCount = g_TradesLondon;
                else if(activeSession == "NewYork") activeSessionTradeCount = g_TradesNewYork;
-               printf(g_SessionActive);
-            
-               // 2. Evaluate limits
-               bool violateSession       = !g_SessionActive || !IsCurrentTimeAllowedWindow(); 
-               bool violateDailyTrades   = (g_MaxTradesDaily > 0 && g_CurrentDailyTrades >= g_MaxTradesDaily);
+
+               bool violateSession       = !g_SessionActive;
+               bool violateDailyTrades   = (g_MaxTradesDaily  > 0 && g_CurrentDailyTrades    >= g_MaxTradesDaily);
                bool violateSessionTrades = (g_MaxTradeSession > 0 && activeSessionTradeCount >= g_MaxTradeSession);
+
                if(violateSession || violateDailyTrades || violateSessionTrades)
                {
-                  string reason = violateSession ? "Time Blocked" : (violateDailyTrades ? "Daily Limit" : "Session Limit");
-                  string blockMsg = "🚨 MetaTrader BLOCK: Unauthorized trade Reason: " + reason + " (Ticket: " + (string)trans.position + ")";
-                  
-                  printf(blockMsg);
+                  string reason = violateSession       ? "Outside Session Window"
+                                : violateDailyTrades   ? "Daily Limit Reached"
+                                : "Session Limit Reached";
+
+                  string blockMsg = "🚨 SentriX BLOCK (fallback close) | Reason: " + reason
+                                  + " | Ticket: " + (string)trans.position;
+                  Print(blockMsg);
                   LogEvent(blockMsg);
-                  //TriggerMT5Alert("🚨 SENTRIX BLOCK: Unauthorized trade  (Ticket: " + (string)trans.position + ")");
                   TriggerMT5Alert(blockMsg);
-                  
-                  // 2. RACE CONDITION FIX: Wait up to 200ms for MT5 to cache the position
-                  for(int i = 0; i < 20; i++) 
+
+                  for(int i = 0; i < 20; i++)
                   {
                      if(PositionSelectByTicket(trans.position)) break;
-                     Sleep(10); 
+                     Sleep(10);
                   }
-                  
-                  printf("Close" + trans.position);
-                  // 3. Close it instantly
+
                   ClosePositionByTicket(trans.position);
-                  PushDataToCSharp(); 
+                  PushDataToCSharp();
                }
                else
                {
-                  Print("✅ Sentrix Tracking: New valid trade successfully opened. Ticket: ", trans.position);
-                 // TriggerMT5Alert(" Sentrix Tracking: New valid trade successfully opened. Ticket:---"+  trans.position);
-                  
+                  Print("✅ SentriX Tracking: Valid trade opened | Ticket: ", trans.position);
                   g_CurrentDailyTrades++;
                   if(activeSession == "London")       g_TradesLondon++;
                   else if(activeSession == "NewYork") g_TradesNewYork++;
                   SaveStateOffline();
-                  PushDataToCSharp(); 
+                  PushDataToCSharp();
                }
             }
             else if(entryType == DEAL_ENTRY_OUT)
             {
-               Print("🔒 Sentrix Tracking: Trade successfully closed. Ticket: ", trans.position);
-      
-               // We keep this so the C# UI updates instantly when a trade closes!
+               Print("🔒 SentriX Tracking: Trade closed | Ticket: ", trans.position);
                PushDataToCSharp();
-                  //Print("🔒 Sentrix Tracking: Trade successfully closed. Ticket: ", trans.position);
-               //TriggerMT5Alert(" Sentrix Tracking: Trade successfully closed. Ticket:-- "+ trans.position);
-               
-               //SaveStateOffline();
-               //PushDataToCSharp();
             }
          }
       }
    }
 }
-
 bool IsManaged(ulong tickets){
    for(int i=0;i<ArraySize(g_managedTickets);i++)
      {
@@ -738,16 +798,17 @@ void LoadConfigOffline(){
             
             g_ActiveSessionName = parts[6];
             g_MaxTradeSession = (int)StringToInteger(parts[7]);
-           // g_UtcOffsetMinutes = (int)StringToInteger(parts[8]);
-            //g_OffsetCalibrated = (bool)StringToInteger(parts[9]);
+            g_UtcOffsetMinutes = (int)StringToInteger(parts[8]);
+            g_OffsetCalibrated = (bool)StringToInteger(parts[9]);
            // if(g_OffsetCalibrated)
                  // Print("SentriX: Restored calibrated offset from disk: ", 
                             //  g_UtcOffsetMinutes, " min. C# not needed for time.");
           // if(ArraySize(parts) >= 10)
               // g_UtcOffsetMinutes = (int)StringToInteger(parts[8]); 
-            
-            Print(" SentriX: Loaded offline rules from local disk. Sessions: ", g_AllowedSessions);
-            //TriggerWindowsToast("Config Loaded","SentriX: Loaded offline rules from local disk.");
+            Print("SentriX: Loaded offline config. Sessions: ", g_AllowedSessions,
+         " | Offset: ", g_UtcOffsetMinutes, " min | Calibrated: ", g_OffsetCalibrated);
+
+                        //TriggerWindowsToast("Config Loaded","SentriX: Loaded offline rules from local disk.");
             
          }
          FileClose(handle);
@@ -991,24 +1052,6 @@ void CheckSession(string name, int startMin, int endMin, int nowMin,
    }
 }
 
-int GetLocalTimeMinutes()
-{
-   if(!g_OffsetCalibrated)
-   {
-      Print("SentriX WARNING: UTC offset not yet calibrated. Using broker time as fallback.");
-   }
-   
-   MqlDateTime t;
-   TimeToStruct(TimeCurrent(), t);
-   int brokerMinutes = t.hour * 60 + t.min;
-   
-   int localMinutes = brokerMinutes + g_UtcOffsetMinutes;
-   
-   if(localMinutes >= 1440) localMinutes -= 1440;
-   if(localMinutes < 0)     localMinutes += 1440;
-   
-   return localMinutes;
-}
 
 
 //+-------------------------------------------------------------
@@ -1048,7 +1091,7 @@ datetime TimeEastern()
 
 bool IsCurrentTimeAllowedWindow()
 {
-   // If no sessions are configured, block trading
+   // 1. If no sessions are configured, block trading
    if(StringLen(g_AllowedSessions) == 0 || g_AllowedSessions == "None") 
       return false; 
       
@@ -1063,16 +1106,17 @@ bool IsCurrentTimeAllowedWindow()
       int firstColon = StringFind(sessions[i], ":");
       if(firstColon < 0) continue;
       
-      string times = StringSubstr(sessions[i], firstColon + 1); // Extract "11:30-12:55"
+      string sessionName = StringSubstr(sessions[i], 0, firstColon);
+      string times = StringSubstr(sessions[i], firstColon + 1); 
+      
       int dashPos = StringFind(times, "-");
       if(dashPos < 0) continue;
       
-      string startStr = StringSubstr(times, 0, dashPos); // Extract "11:30"
-      string endStr   = StringSubstr(times, dashPos + 1); // Extract "12:55"
+      string startStr = StringSubstr(times, 0, dashPos); 
+      string endStr   = StringSubstr(times, dashPos + 1); 
       
       int startColon = StringFind(startStr, ":");
       int endColon   = StringFind(endStr, ":");
-      
       if(startColon < 0 || endColon < 0) continue;
       
       // Convert HH:mm to absolute minutes
@@ -1086,17 +1130,159 @@ bool IsCurrentTimeAllowedWindow()
       if(startTotal <= endTotal)
       {
          // Standard daytime session
-         if(currentMin >= startTotal && currentMin <= endTotal) return true;
+         if(currentMin >= startTotal && currentMin <= endTotal)
+         {
+            Print("✅ SentriX: Trade allowed by Daytime Session [", sessionName, "]");
+            return true;
+         }
       }
       else
       {
          // Midnight cross session (starts before midnight, ends the next day)
-         if(currentMin >= startTotal || currentMin <= endTotal) return true;
+         if(currentMin >= startTotal || currentMin <= endTotal)
+         {
+            Print("✅ SentriX: Trade allowed by Midnight-Cross Session [", sessionName, "]");
+            return true;
+         }
       }
    }
    
    // If the loop finishes and no window matched the current time, block it
+   Print("🚨 SentriX: Time [", currentMin, " mins] is outside all allowed windows.");
    return false; 
+}
+
+int GetLocalTimeMinutes()
+{
+   // Because C# and MT5 are on the same machine, TimeLocal() exactly matches C# DateTime.Now
+   MqlDateTime t;
+   TimeToStruct(TimeLocal(), t); 
+   
+   int localMinutes = t.hour * 60 + t.min;
+   Print("Localtime my machine---"+localMinutes);
+   return localMinutes;
 }
 //+--------------------------------------------------------------
 
+void UpdateUIProtection()
+{
+   // 1. Determine active session counts
+   string activeSession = GetActiveSession();
+   int activeSessionTradeCount = 0;
+   if(activeSession == "London")       activeSessionTradeCount = g_TradesLondon;
+   else if(activeSession == "NewYork") activeSessionTradeCount = g_TradesNewYork;
+
+   // 2. Evaluate the exact same rules used in OnTradeTransaction
+   bool timWindowAllowed     = IsCurrentTimeAllowedWindow();
+   bool violateSession       = !(g_SessionActive && timWindowAllowed); 
+   bool violateDailyTrades   = (g_MaxTradesDaily > 0 && g_CurrentDailyTrades >= g_MaxTradesDaily);
+   bool violateSessionTrades = (g_MaxTradeSession > 0 && activeSessionTradeCount >= g_MaxTradeSession);
+
+   // 3. Apply or Remove UI blocks based on the rules
+   if(violateSession || violateDailyTrades || violateSessionTrades)
+   {
+      Print("Applying UI block method");
+      ApplyUIBlocks();
+   }
+   else
+   {
+      RemoveUIBlocks();
+   }
+}
+
+//+--------------------------------------------------------------
+
+
+void ApplyUIBlocks()
+{
+   long currChart = ChartFirst();
+   
+   while(currChart >= 0)
+   {
+      // 1. Check and Force close the One-Click Trading panel
+      if(ChartGetInteger(currChart, CHART_SHOW_ONE_CLICK))
+      {
+         ChartSetInteger(currChart, CHART_SHOW_ONE_CLICK, false);
+      }
+      
+      // 2. Check and Disable Drag & Drop trading levels
+      if(ChartGetInteger(currChart, CHART_DRAG_TRADE_LEVELS))
+      {
+         ChartSetInteger(currChart, CHART_DRAG_TRADE_LEVELS, false);
+      }
+      
+      // 3. Check and Disable the Right-Click Context Menu
+      if(ChartGetInteger(currChart, CHART_CONTEXT_MENU))
+      {
+         ChartSetInteger(currChart, CHART_CONTEXT_MENU, false);
+      }
+      
+      currChart = ChartNext(currChart);
+   }
+
+   g_UIRestricted = true;
+}
+
+void RemoveUIBlocks()
+{
+   if(!g_UIRestricted) return; // Already lifted
+
+   long currChart = ChartFirst();
+   
+   while(currChart >= 0)
+   {
+      // Restore Drag & Drop trading levels on all charts
+      ChartSetInteger(currChart, CHART_DRAG_TRADE_LEVELS, true);
+      
+      // (We intentionally do NOT auto-reopen the One-Click panel here, 
+      // because the user might have had it closed manually before the block)
+      ChartSetInteger(currChart,CHART_CONTEXT_MENU, true);
+      currChart = ChartNext(currChart);
+   }
+   
+   g_UIRestricted = false;
+}
+
+//---------------------------------------------------------------------
+
+
+void KillNewOrderWindow()
+{
+   bool timWindowAllowed     = IsCurrentTimeAllowedWindow();
+   bool violateSession       = !(g_SessionActive && timWindowAllowed); 
+   bool violateDailyTrades   = (g_MaxTradesDaily > 0 && g_CurrentDailyTrades >= g_MaxTradesDaily);
+   
+   string activeSession = GetActiveSession();
+   int activeSessionTradeCount = 0;
+   if(activeSession == "London") activeSessionTradeCount = g_TradesLondon;
+   else if(activeSession == "NewYork") activeSessionTradeCount = g_TradesNewYork;
+   
+   bool violateSessionTrades = (g_MaxTradeSession > 0 && activeSessionTradeCount >= g_MaxTradeSession);
+
+   if(violateSession || violateDailyTrades || violateSessionTrades)
+   {
+      // 1. Get the very first window on the Windows Desktop
+      long hwnd = GetWindow(GetDesktopWindow(), GW_CHILD);
+      ushort titleBuffer[256]; // Buffer to hold the window title text
+      
+      // 2. Loop through all open windows
+      while(hwnd != 0)
+      {
+         int len = GetWindowTextW(hwnd, titleBuffer, 256);
+         if(len > 0)
+         {
+            // Convert the raw text buffer into an MQL5 string
+            string winTitle = ShortArrayToString(titleBuffer);
+            
+            // 3. If the window title is "Order" OR starts with "Order: "
+            if(winTitle == "Order" || StringFind(winTitle, "Order: ") == 0)
+            {
+               Print("🚨 SentriX: Intercepted and destroyed F9 window: [", winTitle, "]");
+               SendMessageW(hwnd, WM_CLOSE, 0, 0); 
+            }
+         }
+         // Move to the next window in the loop
+         hwnd = GetWindow(hwnd, GW_HWNDNEXT);
+      }
+   }
+}

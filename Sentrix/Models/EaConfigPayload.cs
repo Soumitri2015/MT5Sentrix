@@ -35,6 +35,8 @@ namespace Sentrix.Models
         [JsonPropertyName("UTCTimeOffsetHours")]
         public int UTCTimeOffsetHours { get; set; }
 
+        [JsonPropertyName("UTCTimeOffsetMinutes")]
+        public int UTCTimeOffsetMinutes { get; set; }
 
         [JsonPropertyName("LocalTimeHour")] 
         public int LocalTimeHour { get; set; }

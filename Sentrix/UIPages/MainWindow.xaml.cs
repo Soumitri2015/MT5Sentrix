@@ -1710,7 +1710,7 @@ namespace Sentrix
 
             // Add to payload
 
-
+            int utcOffsetMinutes = (int)TimeZoneInfo.Local.GetUtcOffset(DateTime.UtcNow).TotalMinutes;
             int utcOffsetHours = (int)TimeZoneInfo.Local.GetUtcOffset(DateTime.UtcNow).TotalHours;
 
             List<string> sessionWindows = new List<string>();
@@ -1742,11 +1742,13 @@ namespace Sentrix
                 Manage1R = true ,
                 AllowedSession = flattendSessions,
                 MaxTradesPerSession = _config.MaxTradesPerSession,
-                 
 
-                /* UTCTimeOffsetHours = utcOffsetHours,
-                 LocalTimeHour = localHour,
-                 LocalTimeMinute = localMinute,*/
+
+                
+                UTCTimeOffsetHours = utcOffsetHours,
+                UTCTimeOffsetMinutes = utcOffsetMinutes,   // precise — handles :30 / :45 zones
+                LocalTimeHour = localHour,
+                LocalTimeMinute = localMinute,
                 //ActiveSessionName = _currentSession ?? "None",
 
             };
