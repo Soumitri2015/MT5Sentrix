@@ -716,7 +716,7 @@ namespace Sentrix
                 int currentPositionCount = positions.Count;
                 var sessionTimeService = new TradingSessionTimeService(_config);
                 string activeSessionName = await sessionTimeService.GetActiveSession(DateTime.UtcNow);
-                if (activeSessionName != null) { Debug.WriteLine($"active session name {activeSessionName}"); }
+                if (activeSessionName != null) { /*Debug.WriteLine($"active session name {activeSessionName}"); */}
                 if (positions.Count > 0)
                 {
                     Debug.WriteLine($"[TRACER 2] UI Received trade. Current Active Session is: '{activeSessionName}'");
@@ -1756,7 +1756,7 @@ namespace Sentrix
             string json = JsonSerializer.Serialize(payload);
             _mt5Service.SendCommand(json);
 
-            Debug.WriteLine($"[Sentrix to MT5] pushed new config:{json}"); 
+           // Debug.WriteLine($"[Sentrix to MT5] pushed new config:{json}"); 
         }
 
         private void StartDatabasePolling()

@@ -308,7 +308,7 @@ namespace Sentrix
                 //cmdPipe.Write(lengthBytes, 0, 4);
                 //cmdPipe.Write(data, 0, data.Length);
                 //cmdPipe.Flush();
-                Debug.WriteLine($"MT5Service.SendCommand: sent — {jsonCommand}");
+                //Debug.WriteLine($"MT5Service.SendCommand: sent — {jsonCommand}");
             }
             catch (Exception ex)
             {

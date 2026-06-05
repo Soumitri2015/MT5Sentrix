@@ -197,6 +197,24 @@ void OnTick()
    {
       ManagePositions1R(); // You will need to write this helper function
    }
+   
+   if(IsNewBar(PERIOD_CURRENT))
+   {
+      int signal = CheckCandlePattern(_Symbol,PERIOD_CURRENT);
+
+      if(signal == 1)
+      {
+         Print("📈 Phase 2: Bullish Pattern Detected! (Up-Down-Up)");
+         // TODO: Add H4/Daily Trend Filter check here
+         ExecuteAutomatedTrade(_Symbol,1);
+      }
+      else if(signal == -1)
+      {
+         Print("📉 Phase 2: Bearish Pattern Detected! (Down-Up-Down)");
+         ExecuteAutomatedTrade(_Symbol,-1);
+         // TODO: Add H4/Daily Trend Filter check here
+      }
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -477,13 +495,47 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
             PushDataToCSharp();
             return;
          }
+         
+         string tradeSymbol = trans.symbol; // Get the exact pair they are trading
+      int tradeDirection = (trans.order_type == ORDER_TYPE_BUY) ? 1 : -1;
+      
+      // Scan the allowed timeframes for this specific symbol
+      int sigM15 = CheckCandlePattern(tradeSymbol, PERIOD_M15);
+      int sigM30 = CheckCandlePattern(tradeSymbol, PERIOD_M30);
+      int sigH1  = CheckCandlePattern(tradeSymbol, PERIOD_H1);
+      
+      // Did ANY of the allowed timeframes have the correct pattern?
+      bool hasValidSetup = false;
+      if(sigM15 == tradeDirection || sigM30 == tradeDirection || sigH1 == tradeDirection)
+      {
+         hasValidSetup = true;
+      }
+
+      // If they are missing the 3-candle setup, BLOCK THE TRADE
+      if(!hasValidSetup)
+      {
+         string blockMsg = "🚨 SentriX PRE-BLOCK: No valid 3-Candle Pullback setup found for " + tradeSymbol + " on M15, M30, or H1.";
+         Print(blockMsg);
+         LogEvent(blockMsg);
+         TriggerMT5Alert(blockMsg);
+
+         // Delete the order (Your existing Gate 1 delete logic)
+         MqlTradeRequest deleteReq = {};
+         MqlTradeResult  deleteRes = {};
+         deleteReq.action = TRADE_ACTION_REMOVE;
+         deleteReq.order  = trans.order;
+         OrderSend(deleteReq, deleteRes);
+         
+         PushDataToCSharp();
+         return; // Stop processing
+      }
       }
    }
 
    // ── GATE 2: Deal-level fallback (market orders fill too fast for Gate 1) ──
    // For instant market orders, ORDER_ADD and DEAL_ADD fire almost simultaneously.
    // Gate 1 may not win the race, so we keep the close-after-open as a safety net.
-   if(trans.type == TRADE_TRANSACTION_DEAL_ADD && trans.position > 0)
+  if(trans.type == TRADE_TRANSACTION_DEAL_ADD && trans.position > 0)
    {
       if(HistoryDealSelect(trans.deal))
       {
@@ -494,6 +546,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
          {
             if(entryType == DEAL_ENTRY_IN)
             {
+               // 1. Check Session Limits
                bool timeWindowAllowed = IsCurrentTimeAllowedWindow();
                string activeSession   = GetActiveSession();
                g_SessionActive        = g_SessionActive && timeWindowAllowed;
@@ -506,12 +559,23 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
                bool violateDailyTrades   = (g_MaxTradesDaily  > 0 && g_CurrentDailyTrades    >= g_MaxTradesDaily);
                bool violateSessionTrades = (g_MaxTradeSession > 0 && activeSessionTradeCount >= g_MaxTradeSession);
                
-               printf("Condition : " + violateSession + violateDailyTrades + violateSessionTrades);
-               if(violateSession || violateDailyTrades || violateSessionTrades)
+               // ✅ 2. NEW: Add the Phase 2 Pattern Check to Gate 2!
+               string tradeSymbol = trans.symbol; 
+               int tradeDirection = (dealType == DEAL_TYPE_BUY) ? 1 : -1;
+               
+               int sigM15 = CheckCandlePattern(tradeSymbol, PERIOD_M15);
+               int sigM30 = CheckCandlePattern(tradeSymbol, PERIOD_M30);
+               int sigH1  = CheckCandlePattern(tradeSymbol, PERIOD_H1);
+               
+               bool hasValidSetup = (sigM15 == tradeDirection || sigM30 == tradeDirection || sigH1 == tradeDirection);
+
+               // 3. MASTER BLOCK CHECK: If limits are broken OR pattern is invalid, KILL IT.
+               if(violateSession || violateDailyTrades || violateSessionTrades || !hasValidSetup)
                {
                   string reason = violateSession       ? "Outside Session Window"
                                 : violateDailyTrades   ? "Daily Limit Reached"
-                                : "Session Limit Reached";
+                                : violateSessionTrades ? "Session Limit Reached"
+                                : "Invalid 3-Candle Pattern";
 
                   string blockMsg = "🚨 SentriX BLOCK (fallback close) | Reason: " + reason
                                   + " | Ticket: " + (string)trans.position;
@@ -519,12 +583,14 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
                   LogEvent(blockMsg);
                   TriggerMT5Alert(blockMsg);
 
+                  // Wait a few milliseconds to ensure MT5 registers the position fully
                   for(int i = 0; i < 20; i++)
                   {
                      if(PositionSelectByTicket(trans.position)) break;
                      Sleep(10);
                   }
 
+                  // ✅ Instant Close
                   ClosePositionByTicket(trans.position);
                   PushDataToCSharp();
                }
@@ -534,8 +600,10 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
                   g_CurrentDailyTrades++;
                   if(activeSession == "London")       g_TradesLondon++;
                   else if(activeSession == "NewYork") g_TradesNewYork++;
+                  EnforceManualTradeRisk(trans.position,tradeSymbol,tradeDirection);
                   SaveStateOffline();
                   PushDataToCSharp();
+                  
                }
             }
             else if(entryType == DEAL_ENTRY_OUT)
@@ -996,21 +1064,26 @@ void CheckDailyReset()
 
 string GetActiveSession()
 {
+   if(MQLInfoInteger(MQL_TESTER)) 
+      {
+         g_SessionActive = true;
+         return "London";
+      }
    datetime etTime = TimeEastern();
-   printf(etTime);
+   //printf(etTime);
    MqlDateTime etStruct;
    TimeToStruct(etTime, etStruct);
    
    // Convert current ET time into total minutes for easy comparison
    int currentMinutesET = (etStruct.hour * 60) + etStruct.min;
-   printf(currentMinutesET);
+   //printf(currentMinutesET);
    
    // Rule 1: London Session (2:00 AM to 7:59 AM ET)
    // 2:00 = 120 mins | 7:59 = 479 mins
    if(currentMinutesET >= 120 && currentMinutesET < 480)
    {
       g_SessionActive = true;
-      printf("Current session name London");
+      //printf("Current session name London");
       return "London";
       
    }
@@ -1020,13 +1093,13 @@ string GetActiveSession()
    if(currentMinutesET >= 480 && currentMinutesET <= 690)
    {
       g_SessionActive= true;
-      printf("Current Session Name NewYork");
+     // printf("Current Session Name NewYork");
       return "NewYork"; // Matches your C# exact string
       
    }
    
    // Outside allowed hours
-   printf("outiside allowed hour");
+   //printf("outiside allowed hour");
    g_SessionActive = false;
    return "None";
    
@@ -1088,6 +1161,7 @@ datetime TimeEastern()
 
 bool IsCurrentTimeAllowedWindow()
 {
+   if(MQLInfoInteger(MQL_TESTER)) return true;
    // 1. If no sessions are configured, block trading
    if(StringLen(g_AllowedSessions) == 0 || g_AllowedSessions == "None") 
       return false; 
@@ -1095,7 +1169,7 @@ bool IsCurrentTimeAllowedWindow()
    int currentMin = GetLocalTimeMinutes();
    string sessions[];
    
-   printf("Allowed Session "+ g_AllowedSessions);
+   //printf("Allowed Session "+ g_AllowedSessions);
    // Split by the pipe character (e.g., london:11:30-12:55 | newyork:15:56-14:30)
    int count = StringSplit(g_AllowedSessions, '|', sessions);
    
@@ -1130,7 +1204,7 @@ bool IsCurrentTimeAllowedWindow()
          // Standard daytime session
          if(currentMin >= startTotal && currentMin <= endTotal)
          {
-            Print("✅ SentriX: Trade allowed by Daytime Session [", sessionName, "]");
+            //Print("✅ SentriX: Trade allowed by Daytime Session [", sessionName, "]");
             return true;
          }
       }
@@ -1139,7 +1213,7 @@ bool IsCurrentTimeAllowedWindow()
          // Midnight cross session (starts before midnight, ends the next day)
          if(currentMin >= startTotal || currentMin <= endTotal)
          {
-            Print("✅ SentriX: Trade allowed by Midnight-Cross Session [", sessionName, "]");
+            //Print("✅ SentriX: Trade allowed by Midnight-Cross Session [", sessionName, "]");
             return true;
          }
       }
@@ -1157,7 +1231,8 @@ int GetLocalTimeMinutes()
    TimeToStruct(TimeLocal(), t); 
    
    int localMinutes = t.hour * 60 + t.min;
-   Print("Localtime my machine---"+localMinutes);
+   //PrintFormat("Current Local Time: %02d:%02d", t.hour, t.min);
+   //Print("Localtime my machine---"+localMinutes);
    return localMinutes;
 }
 //+--------------------------------------------------------------
@@ -1175,15 +1250,28 @@ void UpdateUIProtection()
    bool violateSession       = !(g_SessionActive && timWindowAllowed); 
    bool violateDailyTrades   = (g_MaxTradesDaily > 0 && g_CurrentDailyTrades >= g_MaxTradesDaily);
    bool violateSessionTrades = (g_MaxTradeSession > 0 && activeSessionTradeCount >= g_MaxTradeSession);
-
+   static bool wasGloballyBlocked = false;
    // 3. Apply or Remove UI blocks based on the rules
    if(violateSession || violateDailyTrades || violateSessionTrades)
    {
-      Print("Applying UI block method");
+      if(!wasGloballyBlocked) // If it wasn't blocked a second ago, print the reason now!
+      {
+         string reason = violateSession ? "Outside Allowed Session Time" : 
+                        (violateDailyTrades ? "Daily Max Trades Reached" : "Session Max Trades Reached");
+         
+         Print("🔒 SentriX: Global UI Lock Activated. Reason: ", reason);
+         wasGloballyBlocked = true;
+      }
+      //Print("Applying UI block method");
       ApplyUIBlocks();
    }
    else
    {
+      if(wasGloballyBlocked)
+      {
+         Print("🔓 SentriX: Global UI Lock Lifted. Trading is allowed.");
+         wasGloballyBlocked = false;
+      }
       RemoveUIBlocks();
    }
 }
@@ -1197,22 +1285,38 @@ void ApplyUIBlocks()
    
    while(currChart >= 0)
    {
-      // 1. Check and Force close the One-Click Trading panel
-      if(ChartGetInteger(currChart, CHART_SHOW_ONE_CLICK))
-      {
-         ChartSetInteger(currChart, CHART_SHOW_ONE_CLICK, false);
-      }
+      string chartSym = ChartSymbol(currChart);
       
-      // 2. Check and Disable Drag & Drop trading levels
-      if(ChartGetInteger(currChart, CHART_DRAG_TRADE_LEVELS))
+      // 1. Check if this specific chart has a valid setup on any timeframe
+      int sigM15 = CheckCandlePattern(chartSym, PERIOD_M15);
+      int sigM30 = CheckCandlePattern(chartSym, PERIOD_M30);
+      int sigH1  = CheckCandlePattern(chartSym, PERIOD_H1);
+      
+      bool hasAnySetup = (sigM15 != 0 || sigM30 != 0 || sigH1 != 0);
+      
+      // 2. Check your existing session limits
+      bool violateSession = !(g_SessionActive && IsCurrentTimeAllowedWindow()); 
+      bool violateDaily   = (g_MaxTradesDaily > 0 && g_CurrentDailyTrades >= g_MaxTradesDaily);
+      
+      string activeSession = GetActiveSession();
+      int sessionTrades = (activeSession == "London") ? g_TradesLondon : ((activeSession == "NewYork") ? g_TradesNewYork : 0);
+      bool violateSessionTrades = (g_MaxTradeSession > 0 && sessionTrades >= g_MaxTradeSession);
+
+      // 3. THE MASTER RULE: If limits are hit OR there is NO setup, lock the chart!
+      if(violateSession || violateDaily || violateSessionTrades || !hasAnySetup)
       {
+         if(ChartGetInteger(currChart, CHART_SHOW_ONE_CLICK))
+            ChartSetInteger(currChart, CHART_SHOW_ONE_CLICK, false);
+            
          ChartSetInteger(currChart, CHART_DRAG_TRADE_LEVELS, false);
-      }
-      
-      // 3. Check and Disable the Right-Click Context Menu
-      if(ChartGetInteger(currChart, CHART_CONTEXT_MENU))
-      {
          ChartSetInteger(currChart, CHART_CONTEXT_MENU, false);
+      }
+      else
+      {
+         // If we are in a session AND a setup exists, unlock the chart so they can trade!
+         ChartSetInteger(currChart, CHART_DRAG_TRADE_LEVELS, true);
+         ChartSetInteger(currChart, CHART_CONTEXT_MENU, true);
+         // (We don't force One-Click open, we just leave it alone)
       }
       
       currChart = ChartNext(currChart);
@@ -1246,41 +1350,337 @@ void RemoveUIBlocks()
 
 void KillNewOrderWindow()
 {
-   bool timWindowAllowed     = IsCurrentTimeAllowedWindow();
-   bool violateSession       = !(g_SessionActive && timWindowAllowed); 
-   bool violateDailyTrades   = (g_MaxTradesDaily > 0 && g_CurrentDailyTrades >= g_MaxTradesDaily);
+   // Check Session Limits
+   bool violateSession = !(g_SessionActive && IsCurrentTimeAllowedWindow()); 
+   bool violateDaily   = (g_MaxTradesDaily > 0 && g_CurrentDailyTrades >= g_MaxTradesDaily);
    
    string activeSession = GetActiveSession();
-   int activeSessionTradeCount = 0;
-   if(activeSession == "London") activeSessionTradeCount = g_TradesLondon;
-   else if(activeSession == "NewYork") activeSessionTradeCount = g_TradesNewYork;
-   
-   bool violateSessionTrades = (g_MaxTradeSession > 0 && activeSessionTradeCount >= g_MaxTradeSession);
+   int sessionTrades = (activeSession == "London") ? g_TradesLondon : ((activeSession == "NewYork") ? g_TradesNewYork : 0);
+   bool violateSessionTrades = (g_MaxTradeSession > 0 && sessionTrades >= g_MaxTradeSession);
 
-   if(violateSession || violateDailyTrades || violateSessionTrades)
+   // Check if the CURRENT chart they are looking at has a setup
+   int sigM15 = CheckCandlePattern(_Symbol, PERIOD_M15);
+   int sigM30 = CheckCandlePattern(_Symbol, PERIOD_M30);
+   int sigH1  = CheckCandlePattern(_Symbol, PERIOD_H1);
+   bool hasAnySetup = (sigM15 != 0 || sigM30 != 0 || sigH1 != 0);
+      string blockReason = "";
+   if(violateSession) blockReason = "Outside Trading Session";
+   else if(violateDaily) blockReason = "Daily Max Trades Reached";
+   else if(violateSessionTrades) blockReason = "Session Max Trades Reached";
+   else if(!hasAnySetup) blockReason = "No 3-Candle Setup on " + _Symbol;
+   // If limits hit OR NO setup exists, kill the window!
+   if(violateSession || violateDaily || violateSessionTrades || !hasAnySetup)
    {
-      // 1. Get the very first window on the Windows Desktop
       long hwnd = GetWindow(GetDesktopWindow(), GW_CHILD);
-      ushort titleBuffer[256]; // Buffer to hold the window title text
+      ushort titleBuffer[256]; 
       
-      // 2. Loop through all open windows
       while(hwnd != 0)
       {
          int len = GetWindowTextW(hwnd, titleBuffer, 256);
          if(len > 0)
          {
-            // Convert the raw text buffer into an MQL5 string
             string winTitle = ShortArrayToString(titleBuffer);
-            
-            // 3. If the window title is "Order" OR starts with "Order: "
             if(winTitle == "Order" || StringFind(winTitle, "Order: ") == 0)
             {
-               Print("🚨 SentriX: Intercepted and destroyed F9 window: [", winTitle, "]");
+               Print("🚨 SentriX: Intercepted F9 window. Reason: Limits hit OR No 3-Candle Setup.");
+               Print("🚨 SentriX: Intercepted F9 window. Reason: ", blockReason);
                SendMessageW(hwnd, WM_CLOSE, 0, 0); 
             }
          }
-         // Move to the next window in the loop
          hwnd = GetWindow(hwnd, GW_HWNDNEXT);
       }
    }
 }
+//---------------------------------------------------------------------
+
+bool IsNewBar(ENUM_TIMEFRAMES timeframe)
+{
+   // static means this variable remembers its value between function calls
+   static datetime last_time = 0; 
+   
+   // Get the open time of the current active candle [0]
+   datetime current_time = iTime(_Symbol, timeframe, 0); 
+   
+   if(current_time != last_time)
+   {
+      last_time = current_time; // Save the new time
+      return true;              // Alarm rings! New bar detected!
+   }
+   
+   return false; // Still the same bar, do nothing
+}
+
+//------------------------------------------------------------------------
+
+int CheckCandlePattern(string sym, ENUM_TIMEFRAMES tf)
+{
+   int trendDirection = CheckHigherTimeframeTrend(sym);
+   
+   if(trendDirection == 0) return 0;
+   // We use 'sym' instead of '_Symbol' so it can check any pair in the world
+   double O1 = iOpen(sym, tf, 1);  double C1 = iClose(sym, tf, 1);
+   double O2 = iOpen(sym, tf, 2);  double C2 = iClose(sym, tf, 2);
+   double O3 = iOpen(sym, tf, 3);  double C3 = iClose(sym, tf, 3);
+   
+   
+
+   // --- CHECK BULLISH SETUP: Up, Down, Up ---
+   bool isBullish3 = (C3 > O3); 
+   bool isBearish2 = (C2 < O2); 
+   bool isBullish1 = (C1 > O1) && IsStrongCandle(sym,tf,1,0.40); 
+   
+   if(isBullish3 && isBearish2 && isBullish1 && trendDirection ==1) return 1; // 1 = BUY
+
+   // --- CHECK BEARISH SETUP: Down, Up, Down ---
+   bool isBearish3 = (C3 < O3); 
+   bool isBullish2 = (C2 > O2); 
+   bool isBearish1 = (C1 < O1) && IsStrongCandle(sym,tf,1,0.40); 
+   
+   if(isBearish3 && isBullish2 && isBearish1 && trendDirection == -1) return -1; // -1 = SELL
+
+   return 0; // 0 = No valid pattern
+}
+//-----------------------------------------------------------------------
+
+int CheckHigherTimeframeTrend(string sym)
+{
+   // 1. Get the Open and Close of the last closed 4-Hour candle
+   double h4Open  = iOpen(sym, PERIOD_H4, 1);
+   double h4Close = iClose(sym, PERIOD_H4, 1);
+   
+   // 2. Get the Open and Close of the last closed Daily candle
+   double d1Open  = iOpen(sym, PERIOD_D1, 1);
+   double d1Close = iClose(sym, PERIOD_D1, 1);
+   
+   // 3. Determine directions
+   bool isH4Bullish = (h4Close > h4Open);
+   bool isD1Bullish = (d1Close > d1Open);
+   
+   bool isH4Bearish = (h4Close < h4Open);
+   bool isD1Bearish = (d1Close < d1Open);
+   
+   // 4. If they agree perfectly, return the direction!
+   if(isH4Bullish && isD1Bullish) return 1;  // Trend is UP (Allowed to Buy)
+   if(isH4Bearish && isD1Bearish) return -1; // Trend is DOWN (Allowed to Sell)
+   
+   return 0; // Mixed trend (e.g., H4 is Up but Daily is Down). Do not trade.
+}
+
+//---------------------------------------------------------------------------
+
+//Weak candle pattern
+
+bool IsStrongCandle(string sym, ENUM_TIMEFRAMES tf, int index, double minBodyPercent = 0.40)
+{
+   double open  = iOpen(sym, tf, index);
+   double close = iClose(sym, tf, index);
+   double high  = iHigh(sym, tf, index);
+   double low   = iLow(sym, tf, index);
+   
+   double totalSize = high - low;
+   double bodySize  = MathAbs(open - close); // MathAbs ensures it's always a positive number
+   
+   // If the candle is a completely flat line, totalSize is 0. Avoid divide-by-zero error!
+   if(totalSize == 0) return false; 
+   
+   double currentBodyPercent = bodySize / totalSize;
+   
+   // Return true if the body is bigger than or equal to our required percentage
+   return (currentBodyPercent >= minBodyPercent);
+}
+
+//------------------------------------------------------------------------------------
+
+
+bool HasOpenPosition(string sym){
+   for(int i= PositionsTotal() -1 ;i>=0;i--)
+     {
+         if(PositionGetSymbol(i) ==sym)
+            return true;
+     }
+     return false;
+}
+
+//------------------------------------------------------------------------------------
+
+//Automated The Trade Entry and risk management
+
+void ExecuteAutomatedTrade(string sym, int tradeDirection)
+{
+   // 1. Safety Check: Only 1 trade per symbol at a time!
+   if(HasOpenPosition(sym))
+   {
+      Print("SentriX Auto: Skipped valid setup. A trade is already running on ", sym);
+      return;
+   }
+
+   // 2. Get current market prices
+   MqlTick tick;
+   if(!SymbolInfoTick(sym, tick)) return;
+
+   double entryPrice = (tradeDirection == 1) ? tick.ask : tick.bid;
+   int orderType     = (tradeDirection == 1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+
+   // 3. Calculate Smart Stop Loss
+   double stopLoss = GetStructureStopLoss(sym, PERIOD_CURRENT, tradeDirection, 10, 20);
+   if(stopLoss == 0) return;
+
+   // 4. Calculate exactly 1% Risk Lot Size
+   double lotSize = CalculateRiskLotSize(sym, entryPrice, stopLoss, 1.0);
+   if(lotSize == 0) return;
+
+   // 5. Build the Broker Request
+   MqlTradeRequest req = {};
+   MqlTradeResult  res = {};
+
+   req.action    = TRADE_ACTION_DEAL;
+   req.symbol    = sym;
+   req.volume    = lotSize;
+   req.type      = (ENUM_ORDER_TYPE)orderType;
+   req.price     = entryPrice;
+   req.sl        = stopLoss;
+   req.tp        = 0; 
+   req.deviation = 20;
+   req.magic     = 7777; 
+   req.comment   = "SentriX Auto Entry";
+
+   // Dynamic Filling Mode
+   uint filling = (uint)SymbolInfoInteger(sym, SYMBOL_FILLING_MODE);
+   if((filling & SYMBOL_FILLING_FOK) != 0)      req.type_filling = ORDER_FILLING_FOK;
+   else if((filling & SYMBOL_FILLING_IOC) != 0) req.type_filling = ORDER_FILLING_IOC;
+   else                                         req.type_filling = ORDER_FILLING_RETURN;
+
+   // 6. Pull the Trigger!
+   if(OrderSend(req, res))
+   {
+      string dirStr = (tradeDirection == 1) ? "BUY" : "SELL";
+      string msg = "SentriX AUTOMATED ENTRY: Placed " + dirStr + " on " + sym + 
+                   " | Lots: " + DoubleToString(lotSize, 2) + 
+                   " | SL: " + DoubleToString(stopLoss, 5);
+      Print(msg);
+      LogEvent(msg);
+   }
+   else
+   {
+      Print("SentriX Auto Failed: Error ", GetLastError(), " | Retcode: ", res.retcode);
+   }
+}
+
+double GetStructureStopLoss(string sym, ENUM_TIMEFRAMES tf, int tradeDirection, int lookbackCandles = 10, int bufferPoints = 20)
+{
+   double point = SymbolInfoDouble(sym, SYMBOL_POINT);
+   double bufferPriced = bufferPoints * point; 
+   
+   if(tradeDirection == 1) // BULLISH (BUY) - We need the Swing Low
+   {
+      int lowestIndex = iLowest(sym, tf, MODE_LOW, lookbackCandles, 1);
+      if(lowestIndex<0) lowestIndex =1;
+      
+      double swingLow = iLow(sym, tf, lowestIndex);
+      return swingLow - bufferPriced;
+   }
+   else if(tradeDirection == -1) // BEARISH (SELL) - We need the Swing High
+   {
+      int highestIndex = iHighest(sym, tf, MODE_HIGH, lookbackCandles, 1);
+      if(highestIndex<0) highestIndex =1;
+      double swingHigh = iHigh(sym, tf, highestIndex);
+      return swingHigh + bufferPriced;
+   }
+   
+   return 0.0;
+}
+
+double CalculateRiskLotSize(string sym, double entryPrice, double stopLossPrice, double riskPercent = 1.0)
+{
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double riskMoney = balance * (riskPercent / 100.0);
+   
+   double tickValue = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_VALUE);
+   double tickSize  = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_SIZE);
+   
+   double slDistance = MathAbs(entryPrice - stopLossPrice);
+   if(slDistance == 0) return 0.0; 
+   
+   double riskPerOneLot = (slDistance / tickSize) * tickValue;
+   double calculatedLots = riskMoney / riskPerOneLot;
+   
+   double minLot  = SymbolInfoDouble(sym, SYMBOL_VOLUME_MIN);
+   double maxLot  = SymbolInfoDouble(sym, SYMBOL_VOLUME_MAX);
+   double lotStep = SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP);
+   
+   calculatedLots = MathFloor(calculatedLots / lotStep) * lotStep;
+   
+   if(calculatedLots < minLot) calculatedLots = minLot;
+   if(calculatedLots > maxLot) calculatedLots = maxLot;
+   
+   return calculatedLots;
+}
+
+
+// auto correct manual trades for 1% risk and stop loss
+
+void EnforceManualTradeRisk(ulong ticket, string sym, int tradeDirection)
+{
+   if(!PositionSelectByTicket(ticket)) return;
+   
+   double openPrice  = PositionGetDouble(POSITION_PRICE_OPEN);
+   double currentVol = PositionGetDouble(POSITION_VOLUME);
+   
+   // 1. Calculate the Structure SL
+   double structureSL = GetStructureStopLoss(sym, PERIOD_CURRENT, tradeDirection, 10, 20);
+   if(structureSL == 0) return;
+   
+   // 2. Calculate the maximum allowed lot size for exactly 1% risk
+   double maxAllowedVol = CalculateRiskLotSize(sym, openPrice, structureSL, 1.0);
+   if(maxAllowedVol == 0) return;
+   
+   // 3. LOT SIZE AUTO-CORRECTION (The Magic Slice)
+   if(currentVol > maxAllowedVol)
+   {
+      double excessVolume = currentVol - maxAllowedVol;
+      
+      // Normalize volume to broker limits
+      double volStep = SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP);
+      excessVolume = MathFloor(excessVolume / volStep) * volStep;
+      
+      if(excessVolume >= SymbolInfoDouble(sym, SYMBOL_VOLUME_MIN))
+      {
+         Print(" SentriXrisk: Manual trade (", currentVol, " lots) exceeds 1% risk. Auto-closing ", excessVolume, " lots.");
+         
+         MqlTick tick;
+         SymbolInfoTick(sym, tick);
+         
+         MqlTradeRequest reqClose = {};
+         MqlTradeResult  resClose = {};
+         reqClose.action    = TRADE_ACTION_DEAL;
+         reqClose.position  = ticket;
+         reqClose.symbol    = sym;
+         reqClose.volume    = excessVolume;
+         int type = (int)PositionGetInteger(POSITION_TYPE);
+         reqClose.type      = (type == POSITION_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+         reqClose.price     = (type == POSITION_TYPE_BUY) ? tick.bid : tick.ask;
+         
+         uint filling = (uint)SymbolInfoInteger(sym, SYMBOL_FILLING_MODE);
+         if((filling & SYMBOL_FILLING_FOK) != 0)      reqClose.type_filling = ORDER_FILLING_FOK;
+         else if((filling & SYMBOL_FILLING_IOC) != 0) reqClose.type_filling = ORDER_FILLING_IOC;
+         else                                         reqClose.type_filling = ORDER_FILLING_RETURN;
+         
+         OrderSend(reqClose, resClose); // Instantly dump the excess risk!
+      }
+   }
+   
+   // 4. APPLY THE STRUCTURE STOP LOSS
+   MqlTradeRequest reqMod = {};
+   MqlTradeResult  resMod = {};
+   reqMod.action   = TRADE_ACTION_SLTP;
+   reqMod.position = ticket;
+   reqMod.symbol   = sym;
+   reqMod.sl       = structureSL; 
+   reqMod.tp       = PositionGetDouble(POSITION_TP); // Keep their Take Profit if they set one!
+   
+   if(OrderSend(reqMod, resMod))
+   {
+      Print("️ SentriXrisk : Successfully enforced Structure Stop Loss at ", structureSL);
+   }
+}
+

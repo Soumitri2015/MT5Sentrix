@@ -161,7 +161,7 @@ namespace Sentrix
             {
                 // Standard ID for Windows environments
                 easternZone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
-            }
+            }   
             catch (TimeZoneNotFoundException)
             {
                 // Fallback for Linux/macOS environments (if applicable)
