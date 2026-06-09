@@ -90,6 +90,7 @@ namespace Sentrix
         private readonly ConfigHelper _configHelper;
         private int userId = UserSession.UserId;
         private string userRole = UserSession.UserRole;
+        private bool IsInTrial = UserSession.IsInTrial;
         PositionRepository _positionRepo;
 
         private MT5Service _mt5Service = new MT5Service();
@@ -1742,9 +1743,9 @@ namespace Sentrix
                 Manage1R = true ,
                 AllowedSession = flattendSessions,
                 MaxTradesPerSession = _config.MaxTradesPerSession,
+                IsTrailMode = IsInTrial,
 
 
-                
                 UTCTimeOffsetHours = utcOffsetHours,
                 UTCTimeOffsetMinutes = utcOffsetMinutes,   // precise — handles :30 / :45 zones
                 LocalTimeHour = localHour,

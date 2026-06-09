@@ -37,7 +37,7 @@ namespace Sentrix.Repositories
 
                 throw;
             }
-            
+
         }
 
         public int GetUser(string email, string password)
@@ -52,7 +52,7 @@ namespace Sentrix.Repositories
 
                 throw;
             }
-           
+
         }
 
         public void UpdateUser(Users user)
@@ -102,9 +102,9 @@ namespace Sentrix.Repositories
             }
         }
 
-        public async Task<List<Sentrix.Models.EventLog>>GetEventsByUser(int userId)
+        public async Task<List<Sentrix.Models.EventLog>> GetEventsByUser(int userId)
         {
-            var events = await _conn.TradeEvents.Where(e=> e.UserId == userId).OrderByDescending(e=> e.TradeDate).ThenByDescending(e => e.EventTime)
+            var events = await _conn.TradeEvents.Where(e => e.UserId == userId).OrderByDescending(e => e.TradeDate).ThenByDescending(e => e.EventTime)
                 .Select(e => new Sentrix.Models.EventLog
                 {
                     Timestamp = e.EventTime.ToString("HH:mm"),
@@ -113,6 +113,67 @@ namespace Sentrix.Repositories
                 })
                 .ToListAsync();
             return events;
+        }
+        public string GetUserSubTrialDate(int userId)
+        {
+            try
+            {
+                var user = _conn.Users.FirstOrDefault(u => u.Id == userId);
+                if (user != null)
+                {
+                    // If they have a SubCode, they are fully subscribed, not on trial
+                    if (!string.IsNullOrEmpty(user.SubCode))
+                    {
+                        return "Subscribed";
+                    }
+
+                    // Calculate trial end date (7 days after creation)
+                    DateTime trialEndDate = user.CreatedDate.AddDays(7);
+
+                    // Check if trial is expired
+                    if (DateTime.Now > trialEndDate)
+                    {
+                        // Set IsActive to false if the trial is over and no SubCode exists
+                        if (user.IsActive)
+                        {
+                            user.IsActive = false;
+                            _conn.SaveChanges();
+                        }
+                        return "Trial Expired";
+                    }
+
+                    // If still in trial, return the date it ends
+                    return trialEndDate.ToString("yyyy-MM-dd");
+                }
+                return "User Not Found";
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"GetUserSubTrialDate exception: {ex.Message}");
+                return "Error Retrieving Trial Date";
+            }
+        }
+        public bool IsUserInTrial(int userId)
+        {
+            try
+            {
+                var user = _conn.Users.FirstOrDefault(u => u.Id == userId);
+                if (user != null)
+                {
+                    if (!string.IsNullOrEmpty(user.SubCode))
+                    {
+                        return false; // Not in trial, they are subscribed
+                    }
+                    DateTime trialEndDate = user.CreatedDate.AddDays(7);
+                    return DateTime.Now <= trialEndDate; // True if still in trial
+                }
+                return false; // User not found, treat as not in trial
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"IsUserInTrial exception: {ex.Message}");
+                return false; // On error, treat as not in trial
+            }
         }
     }
 }

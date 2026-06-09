@@ -48,6 +48,9 @@ namespace Sentrix.Models
         [JsonPropertyName("MaxTradesPerSession")]
         public int MaxTradesPerSession { get; set; }
 
+        [JsonPropertyName("IsTrailMode")]
+        public bool IsTrailMode { get; set; }
+
 
     }
 }

@@ -38,5 +38,26 @@ namespace Sentrix.Properties
             get => (string)this[nameof(SavedPassword)];
             set => this[nameof(SavedPassword)] = value;
         }
+        [UserScopedSetting]
+        [DefaultSettingValue("")]
+        public DateTime RememberMeExpiry
+        {
+            get
+            {
+                return ((DateTime)this["RememberMeExpiry"]);
+            }
+            set
+            {
+                this["RememberMeExpiry"] = value;
+            }
+        }
+
+        [UserScopedSetting]
+        [DefaultSettingValue("false")]
+        public bool IsSubCodeEnabled
+        {
+            get => (bool)this[nameof(IsSubCodeEnabled)];
+            set => this[nameof(IsSubCodeEnabled)] = value;
+        }
     }
 }

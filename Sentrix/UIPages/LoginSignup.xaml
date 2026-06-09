@@ -240,7 +240,17 @@
                     <PasswordBox x:Name="SignUpConfirmPassword"
                               Style="{StaticResource ModernPasswordBox}"
                               Height="40"
-                              Margin="0,0,0,18"/>
+                              Margin="0,0,0,12"/>
+
+                    <!-- Subscription Code -->
+                    <TextBlock Text="Subscription Code"
+                            FontSize="13"
+                            Foreground="#2C3E50"
+                            Margin="0,0,0,4"/>
+                    <TextBox x:Name="SignUpSubscriptionCode"
+                          Style="{StaticResource ModernTextBox}"
+                          Height="40"
+                          Margin="0,0,0,18"/>
 
                     <!-- Create Account Button -->
                     <Button Content="Create Account"

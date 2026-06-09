@@ -78,7 +78,9 @@ namespace Sentrix
                         // restore session
                         UserSession.SetUser(userId);
                         UserSession.SetUserRole(userRepo.GetUserRoleById(userId));
-
+                        
+                        bool istrial= userRepo.IsUserInTrial(userId);
+                        UserSession.SetTrialStatus(istrial);
                         var mainWindow = ServiceProvider.GetRequiredService<MainWindow>();
                         MainWindow = mainWindow;
                         mainWindow.Show();

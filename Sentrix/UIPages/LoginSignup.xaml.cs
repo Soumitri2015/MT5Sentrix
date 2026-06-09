@@ -27,6 +27,7 @@ namespace Sentrix.UIPages
     public partial class LoginSignup : Window
     {
         private UserRepository _userRepository;
+        private const string SubCode = "SentrixApp";
 
 
         public LoginSignup(UserRepository userRepository)
@@ -79,12 +80,16 @@ namespace Sentrix.UIPages
                     Sentrix.Properties.Settings.Default.RememberMe = true;
                     Sentrix.Properties.Settings.Default.SavedEmail = LoginEmail.Text;
                     Sentrix.Properties.Settings.Default.SavedPassword = LoginPassword.Password;
+
+                    Sentrix.Properties.Settings.Default.RememberMeExpiry = DateTime.Now.AddDays(30);
                 }
                 else
                 {
                     Sentrix.Properties.Settings.Default.RememberMe = false;
                     Sentrix.Properties.Settings.Default.SavedEmail = "";
                     Sentrix.Properties.Settings.Default.SavedPassword = "";
+
+                    Sentrix.Properties.Settings.Default.RememberMeExpiry = DateTime.MinValue;
                 }
                 Sentrix.Properties.Settings.Default.Save();
 
@@ -94,6 +99,9 @@ namespace Sentrix.UIPages
 
                 UserSession.SetUser(userId);
                 UserSession.SetUserRole(_userRepository.GetUserRoleById(userId));
+                _userRepository.GetUserSubTrialDate(userId);
+                bool isTrial = _userRepository.IsUserInTrial(userId);
+                UserSession.SetTrialStatus(isTrial);
                 var scope = ((App)System.Windows.Application.Current).ServiceProvider.GetRequiredService<MainWindow>();
                 System.Windows.Application.Current.MainWindow = scope;
                 scope.Show();
@@ -144,6 +152,12 @@ namespace Sentrix.UIPages
                     MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
+            if(SignUpSubscriptionCode.Text != SubCode)
+            {
+                MessageBox.Show("you have 7days free trial starting from today","Message",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                SignUpSubscriptionCode.Text = null;
+            }
             try
             {
                 _userRepository.AddUser(new EntityModel.Users
@@ -151,6 +165,7 @@ namespace Sentrix.UIPages
                     UserName = SignUpName.Text,
                     Email = SignUpEmail.Text,
                     Password = SignUpPassword.Password,
+                    SubCode = SignUpSubscriptionCode.Text ,
                     IsActive = true
                 });
             }
@@ -183,6 +198,17 @@ namespace Sentrix.UIPages
             {
                 if (!Sentrix.Properties. Settings.Default.RememberMe)
                     return;
+
+                if (DateTime.Now > Sentrix.Properties.Settings.Default.RememberMeExpiry)
+                {
+                    Sentrix.Properties.Settings.Default.RememberMe = false;
+                    Sentrix.Properties.Settings.Default.SavedEmail = "";
+                    Sentrix.Properties.Settings.Default.SavedPassword = "";
+                    Sentrix.Properties.Settings.Default.RememberMeExpiry = DateTime.MinValue;
+                    Sentrix.Properties.Settings.Default.Save();
+
+                    return;
+                }
 
                 string savedEmail = Sentrix.Properties. Settings.Default.SavedEmail;
                 string savedPassword = Sentrix.Properties.Settings.Default.SavedPassword;
