@@ -154,9 +154,31 @@ namespace Sentrix.UIPages
             }
             if(SignUpSubscriptionCode.Text != SubCode)
             {
-                MessageBox.Show("you have 7days free trial starting from today","Message",
-                    MessageBoxButton.OK, MessageBoxImage.Warning);
+
+                var tpe = _userRepository.GetSubCodeType(SignUpSubscriptionCode.Text);
+                if (tpe == "Free")
+                {
+
+                    MessageBox.Show("you have 7days free trial starting from today", "Message",
+                        MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+                else if (tpe == "Paid")
+                {
+                    MessageBox.Show("Thank you for choosing the our service", "Message",
+                        MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+                else if (tpe == "Invalid Code")
+                {
+                    MessageBox.Show("Please enter valid code", "Message", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+
+            }
+            if (SignUpSubscriptionCode.Text == null)
+            {
+                MessageBox.Show("you have 7days free trial starting from today", "Message",
+                        MessageBoxButton.OK, MessageBoxImage.Warning);
                 SignUpSubscriptionCode.Text = null;
+
             }
             try
             {

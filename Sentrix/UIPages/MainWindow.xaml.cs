@@ -99,6 +99,7 @@ namespace Sentrix
         private HashSet<long> _closingTickets = new HashSet<long>();
         private bool _isCurrentlyLocked = false;
         private System.Threading.Timer _dbPollTimer;
+        public bool IsUserLoggedIn { get; set; } = false;
         #endregion
 
         #region Win32 API & Helpers
@@ -345,6 +346,16 @@ namespace Sentrix
         }
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
+            if (UserSession.UserId != -1)
+            {
+                IsUserLoggedIn = true;
+                SendConfigToEA();
+            }
+            else
+            {
+                IsUserLoggedIn = false;
+                SendConfigToEA();
+            }
             LoadDailyState();
             PositionControllerBottomRight();
         }
@@ -445,6 +456,29 @@ namespace Sentrix
 
                 //System.Windows.MessageBox.Show("Failed to close cTrader:\n" + ex.Message);
             }
+        }
+
+        private void LogoutButton_Click(object sender, RoutedEventArgs e)
+        {
+            // 1. Clear the saved settings (so Auto-Login doesn't immediately pull them back in)
+            Sentrix.Properties.Settings.Default.RememberMe = false;
+            Sentrix.Properties.Settings.Default.SavedEmail = "";
+            Sentrix.Properties.Settings.Default.SavedPassword = "";
+            Sentrix.Properties.Settings.Default.RememberMeExpiry = DateTime.MinValue;
+            Sentrix.Properties.Settings.Default.Save();
+
+            // 2. Clear the active session memory
+            UserSession.SetUser(-1);
+            UserSession.SetUserRole(null);
+            UserSession.SetTrialStatus(false);
+
+            // 3. Resolve the Login window from your Dependency Injection container
+            var loginWindow = ((App)System.Windows.Application.Current).ServiceProvider.GetRequiredService<Sentrix.UIPages.LoginSignup>();
+
+            // 4. Show Login, set as MainWindow, and close the current MainWindow
+            System.Windows.Application.Current.MainWindow = loginWindow;
+            loginWindow.Show();
+            this.Hide();
         }
 
         private async void EventLogBtn_Click(object sender, RoutedEventArgs e)
@@ -1733,9 +1767,10 @@ namespace Sentrix
             var payload = new EaConfigPayload
             {
                 Cmd = "UPDATE_CONFIG",
+                IsAppLoggedIn = IsUserLoggedIn,
                 SessionActive = isSessionActive,
                 MaxTradesDaily = _config.MaxTradesPerDay,
-                CurrentDailyTrades = _tradesToday,
+                CurrentDailyTrades = _tradesToday,  
                 MaxLossPercent = _config.LossPercentValue,
                 CurrentSessionTrades = !string.IsNullOrEmpty(_currentSession) && _sessionToday.ContainsKey(_currentSession)
                                         ? _sessionToday[_currentSession].Trades

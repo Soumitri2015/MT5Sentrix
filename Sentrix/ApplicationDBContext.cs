@@ -23,6 +23,7 @@ namespace Sentrix
         public DbSet<Positions> Positions { get; set; }
         public DbSet<Roles> Roles { get; set; }
         public DbSet<UserRoles> UserRoles { get; set; }
+        public DbSet<WebScriptions> WebScriptions { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

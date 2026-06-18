@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Sentrix"
         
-        SizeToContent="Height"
+        SizeToContent="WidthAndHeight"
         WindowStyle="None"
         ResizeMode="NoResize"
         Topmost="True"
@@ -20,24 +20,15 @@
          Background="#1E1E1E"
          BorderBrush="#2A2A2A"
          BorderThickness="1">
-        <Grid>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-            </Grid.RowDefinitions>
+        <Grid Grid.Row="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="10"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
 
-            <Grid Grid.Row="0">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="10"/>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <!--<ColumnDefinition Width="Auto"/>-->
-                </Grid.ColumnDefinitions>
-
-                <Button x:Name="BlockClicksBtn"
+            <Button x:Name="BlockClicksBtn"
                      Grid.Column="0"
                      Width="44"
                      Height="44"
@@ -45,16 +36,16 @@
                      Background="#2D2D2D"
                      BorderThickness="0"
                      Cursor="Hand">
-                    <Border CornerRadius="8" Background="{Binding Background, RelativeSource={RelativeSource AncestorType=Button}}">
-                        <TextBlock x:Name="BlockIcon"
+                <Border CornerRadius="8" Background="{Binding Background, RelativeSource={RelativeSource AncestorType=Button}}">
+                    <TextBlock x:Name="BlockIcon"
                                 Text="🛡️"
                                 FontSize="22"
                                 VerticalAlignment="Center"
                                 HorizontalAlignment="Center"/>
-                    </Border>
-                </Button>
+                </Border>
+            </Button>
 
-                <TextBlock x:Name="StatusText"
+            <TextBlock x:Name="StatusText"
                         Grid.Column="2"
                         VerticalAlignment="Center"
                         Foreground="#B0B0B0"
@@ -64,110 +55,94 @@
                         TextWrapping="Wrap" 
                         Margin="5,0"/>
 
+            <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
+
                 <Button x:Name="CloseTraderBtn"
-                     Grid.Column="3"
-                     Width="90"
-                     Height="34"
-                     Click="CloseTrader_Click"
-                     Content="Close MT"
-                     Background="#3A3A3A"
-                     Foreground="White"
-                     BorderThickness="0"
-                     Cursor="Hand"
-                     Margin="4,0">
+                         Width="65"
+                         Height="34"
+                         Click="CloseTrader_Click"
+                         Content="Close MT"
+                         Background="#3A3A3A"
+                         Foreground="White"
+                         BorderThickness="0"
+                         Cursor="Hand"
+                         Margin="4,0">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
-                            <Border Background="{TemplateBinding Background}"
-                                 CornerRadius="8">
-                                <ContentPresenter HorizontalAlignment="Center"
-                                               VerticalAlignment="Center"/>
+                            <Border Background="{TemplateBinding Background}" CornerRadius="8">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
                         </ControlTemplate>
                     </Button.Template>
                 </Button>
 
-                <Button x:Name="EventLogBtn"
-                     Grid.Column="4"
-                     Width="40"
-                     Height="34"
-                     Click="EventLogBtn_Click"
-                     Background="#2D2D2D"
-                     BorderThickness="0"
-                     Cursor="Hand"
-                     Margin="4,0">
+                <Button x:Name="LogoutBtn"
+                         Width="40"
+                         Height="34"
+                         Click="LogoutButton_Click"
+                         Background="#2D2D2D"
+                         BorderThickness="0"
+                         Cursor="Hand"
+                         Margin="4,0">
                     <Border CornerRadius="8" Background="{Binding Background, RelativeSource={RelativeSource AncestorType=Button}}">
-                        <TextBlock Text="📄"
-                                FontSize="18"
-                                Foreground="White"
-                                VerticalAlignment="Center"
-                                HorizontalAlignment="Center"/>
+                        <TextBlock Text="🚪" FontSize="18" Foreground="White" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                    </Border>
+                </Button>
+
+                <Button x:Name="EventLogBtn"
+                         Width="40"
+                         Height="34"
+                         Click="EventLogBtn_Click"
+                         Background="#2D2D2D"
+                         BorderThickness="0"
+                         Cursor="Hand"
+                         Margin="4,0">
+                    <Border CornerRadius="8" Background="{Binding Background, RelativeSource={RelativeSource AncestorType=Button}}">
+                        <TextBlock Text="📄" FontSize="18" Foreground="White" VerticalAlignment="Center" HorizontalAlignment="Center"/>
                     </Border>
                 </Button>
 
                 <Button x:Name="SettingsBtn"
-                     Grid.Column="5"
-                     Width="40"
-                     Height="34"
-                     Click="SettingsBtn_Click"
-                     Background="#2D2D2D"
-                     BorderThickness="0"
-                     Cursor="Hand"
-                     Margin="4,0">
+                         Width="40"
+                         Height="34"
+                         Click="SettingsBtn_Click"
+                         Background="#2D2D2D"
+                         BorderThickness="0"
+                         Cursor="Hand"
+                         Margin="4,0">
                     <Border CornerRadius="8" Background="{Binding Background, RelativeSource={RelativeSource AncestorType=Button}}">
-                        <TextBlock Text="⚙"
-                                FontSize="18"
-                                Foreground="White"
-                                VerticalAlignment="Center"
-                                HorizontalAlignment="Center"/>
+                        <TextBlock Text="⚙" FontSize="18" Foreground="White" VerticalAlignment="Center" HorizontalAlignment="Center"/>
                     </Border>
                 </Button>
 
                 <Button x:Name="MinimizeBtn"
-                     Grid.Column="6"
-                     Width="40"
-                     Height="34"
-                     Click="MinimizeBtn_Click"
-                     Background="#2D2D2D"
-                     BorderThickness="0"
-                     Cursor="Hand"
-                     Margin="4,0">
+                         Width="40"
+                         Height="34"
+                         Click="MinimizeBtn_Click"
+                         Background="#2D2D2D"
+                         BorderThickness="0"
+                         Cursor="Hand"
+                         Margin="4,0">
                     <Border CornerRadius="8" Background="{Binding Background, RelativeSource={RelativeSource AncestorType=Button}}">
-                        <TextBlock Text="➖"
-                                FontSize="18"
-                                Foreground="White"
-                                VerticalAlignment="Center"
-                                HorizontalAlignment="Center"/>
-                    </Border>
-                </Button>
-                <Button x:Name="AdminPanelBtn"
-                        Visibility="Collapsed"
-                 Grid.Column="7"
-                 Width="40"
-                 Height="34"
-                 Click="AdminPanelBtn_Click"
-                 Background="#2D2D2D"
-                 BorderThickness="0"
-                 Cursor="Hand"
-                 Margin="4,0">
-                    <Border CornerRadius="8" Background="{Binding Background, RelativeSource={RelativeSource AncestorType=Button}}">
-                        <TextBlock Text="👨‍💼"
-                        FontSize="18"
-                        Foreground="White"
-                        VerticalAlignment="Center"
-                        HorizontalAlignment="Center"/>
+                        <TextBlock Text="➖" FontSize="18" Foreground="White" VerticalAlignment="Center" HorizontalAlignment="Center"/>
                     </Border>
                 </Button>
 
-                <!--<Button Grid.Column="3"
-                     x:Name="ManualExtractBtn"
-                     Visibility="Collapsed"
-                     Width="70"
-                     Height="34"
-                     Click="ManualExtract_Click"
-                     Content="Extract"
-                     Background="#2D6DA5"
-                     Foreground="White"/>-->
-            </Grid>
+                <Button x:Name="AdminPanelBtn"
+                         Visibility="Collapsed"
+                         Width="40"
+                         Height="34"
+                         Click="AdminPanelBtn_Click"
+                         Background="#2D2D2D"
+                         BorderThickness="0"
+                         Cursor="Hand"
+                         Margin="4,0">
+                    <Border CornerRadius="8" Background="{Binding Background, RelativeSource={RelativeSource AncestorType=Button}}">
+                        <TextBlock Text="👨‍💼" FontSize="18" Foreground="White" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                    </Border>
+                </Button>
+
+            </StackPanel>
         </Grid>
     </Border>
 </Window>

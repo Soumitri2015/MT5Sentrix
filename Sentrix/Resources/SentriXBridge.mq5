@@ -43,6 +43,9 @@ int g_TradesLondon = 0;
 int g_TradesNewYork = 0;
 bool g_UIRestricted = false;
 
+bool g_IsPremier = false;
+bool g_isAppLoggenIn = false;
+
 
 string g_eventQueue[];
 
@@ -174,6 +177,10 @@ void OnTimer()
 
 void OnTick() 
 {
+   if(!g_isAppLoggenIn)
+     {
+      return;
+     }
    
    if(g_SessionActive && g_MaxLossPercent >0){
       double balance = AccountInfoDouble(ACCOUNT_BALANCE);
@@ -193,7 +200,7 @@ void OnTick()
       
    }
    
-   if(g_Manage1R)
+   if(g_Manage1R && g_IsPremier)
    {
       ManagePositions1R(); // You will need to write this helper function
    }
@@ -271,6 +278,8 @@ void ReadIncomingCommand()
       g_MaxTradeSession =(int)ExtractNumber(cmd,"\"MaxTradesPerSession\":");
       
       g_MaxTradesDaily     = (int)ExtractNumber(cmd, "\"MaxTradesDaily\":");
+      g_IsPremier = (StringFind(cmd, "\"IsTrailMode\":true") >= 0);
+      g_isAppLoggenIn = (StringFind(cmd,"\"IsAppLoggedIn\":true") >= 0);
       
       int SentrixDailyTrades = (int)ExtractNumber(cmd,"\"CurrentDailyTrades\":");
       int csharpSessionTrades = (int)ExtractNumber(cmd, "\"CurrentSessionTrades\":");
@@ -447,7 +456,8 @@ string BuildJSON()
 void OnTradeTransaction(const MqlTradeTransaction &trans,
                         const MqlTradeRequest &request,
                         const MqlTradeResult &result)
-{
+{  
+   if(!g_isAppLoggenIn) return;
    // ✅ GATE 1: Intercept at ORDER level — fires before the deal executes
    if(trans.type == TRADE_TRANSACTION_ORDER_ADD)
    {
@@ -600,7 +610,10 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
                   g_CurrentDailyTrades++;
                   if(activeSession == "London")       g_TradesLondon++;
                   else if(activeSession == "NewYork") g_TradesNewYork++;
-                  EnforceManualTradeRisk(trans.position,tradeSymbol,tradeDirection);
+                  if(g_IsPremier){
+                     EnforceManualTradeRisk(trans.position,tradeSymbol,tradeDirection);
+                  }
+                  
                   SaveStateOffline();
                   PushDataToCSharp();
                   
@@ -826,12 +839,12 @@ void SaveConfigOffline(){
    if(handle != INVALID_HANDLE)
    {
       
-       string data = StringFormat("%d^%d^%d^%.2f^%d^%s^%s^%d^%d^%d", 
+       string data = StringFormat("%d^%d^%d^%.2f^%d^%s^%s^%d^%d^%d^%d", 
    g_SessionActive, g_MaxTradesDaily, g_CurrentDailyTrades, 
    g_MaxLossPercent, g_Manage1R, g_AllowedSessions, 
    g_ActiveSessionName, g_MaxTradeSession,
    g_UtcOffsetMinutes,
-   g_OffsetCalibrated); 
+   g_OffsetCalibrated,g_IsPremier); 
          
       FileWrite(handle, data);
       FileClose(handle);
@@ -865,6 +878,7 @@ void LoadConfigOffline(){
             g_MaxTradeSession = (int)StringToInteger(parts[7]);
             g_UtcOffsetMinutes = (int)StringToInteger(parts[8]);
             g_OffsetCalibrated = (bool)StringToInteger(parts[9]);
+            g_IsPremier = (bool)StringToInteger(parts[10]);
            // if(g_OffsetCalibrated)
                  // Print("SentriX: Restored calibrated offset from disk: ", 
                             //  g_UtcOffsetMinutes, " min. C# not needed for time.");
@@ -1239,6 +1253,10 @@ int GetLocalTimeMinutes()
 
 void UpdateUIProtection()
 {
+   if(!g_isAppLoggenIn){
+      RemoveUIBlocks();
+      return;
+   }
    // 1. Determine active session counts
    string activeSession = GetActiveSession();
    int activeSessionTradeCount = 0;
@@ -1350,6 +1368,9 @@ void RemoveUIBlocks()
 
 void KillNewOrderWindow()
 {
+   if(!g_isAppLoggenIn){
+      return;
+   }
    // Check Session Limits
    bool violateSession = !(g_SessionActive && IsCurrentTimeAllowedWindow()); 
    bool violateDaily   = (g_MaxTradesDaily > 0 && g_CurrentDailyTrades >= g_MaxTradesDaily);

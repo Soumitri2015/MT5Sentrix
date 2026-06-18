@@ -47,10 +47,11 @@ namespace Sentrix.Repositories
                 var user = _conn.Users.FirstOrDefault(u => u.Email == email && u.Password == password);
                 return user != null ? user.Id : -1;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
 
-                throw;
+                Console.WriteLine(ex.Message);
+                return -1;
             }
 
         }
@@ -121,36 +122,40 @@ namespace Sentrix.Repositories
                 var user = _conn.Users.FirstOrDefault(u => u.Id == userId);
                 if (user != null)
                 {
-                    // If they have a SubCode, they are fully subscribed, not on trial
+                    // 1. Check for an official Web Subscription first
                     if (!string.IsNullOrEmpty(user.SubCode))
                     {
-                        return "Subscribed";
+                        // Match the user's code to the StatusToken in WebSubcription
+                        var subscription = _conn.WebScriptions.FirstOrDefault(s => s.StatusToken == user.SubCode);
+
+                        if (subscription != null)
+                        {
+                            if (!subscription.IsActive || DateTime.Now > subscription.ExpiryDate)
+                            {
+                                return "Subscription Expired";
+                            }
+
+                            // Returns e.g., "Paid - Ends 2026-07-09" or "Free - Ends 2026-07-09"
+                            return $"{subscription.PaymentStatus} - Ends {subscription.ExpiryDate.ToString("yyyy-MM-dd")}";
+                        }
                     }
 
-                    // Calculate trial end date (7 days after creation)
+                    // 2. Fallback to 7-day Trial if no code is present
                     DateTime trialEndDate = user.CreatedDate.AddDays(7);
 
-                    // Check if trial is expired
                     if (DateTime.Now > trialEndDate)
                     {
-                        // Set IsActive to false if the trial is over and no SubCode exists
-                        if (user.IsActive)
-                        {
-                            user.IsActive = false;
-                            _conn.SaveChanges();
-                        }
                         return "Trial Expired";
                     }
 
-                    // If still in trial, return the date it ends
-                    return trialEndDate.ToString("yyyy-MM-dd");
+                    return $"Trial Ends {trialEndDate.ToString("yyyy-MM-dd")}";
                 }
                 return "User Not Found";
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"GetUserSubTrialDate exception: {ex.Message}");
-                return "Error Retrieving Trial Date";
+                return "Error Retrieving Status";
             }
         }
         public bool IsUserInTrial(int userId)
@@ -158,22 +163,50 @@ namespace Sentrix.Repositories
             try
             {
                 var user = _conn.Users.FirstOrDefault(u => u.Id == userId);
-                if (user != null)
+                if (user == null) return false;
+
+                
+                if (!string.IsNullOrEmpty(user.SubCode))
                 {
-                    if (!string.IsNullOrEmpty(user.SubCode))
+                    var subscription = _conn.WebScriptions.FirstOrDefault(s => s.StatusToken == user.SubCode);
+
+                    if (subscription != null)
                     {
-                        return false; // Not in trial, they are subscribed
+                        
+                        return subscription.IsActive && DateTime.Now <= subscription.ExpiryDate;
                     }
-                    DateTime trialEndDate = user.CreatedDate.AddDays(7);
-                    return DateTime.Now <= trialEndDate; // True if still in trial
                 }
-                return false; // User not found, treat as not in trial
+
+                
+                return DateTime.Now <= user.CreatedDate.AddDays(7);
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"IsUserInTrial exception: {ex.Message}");
-                return false; // On error, treat as not in trial
+                Debug.WriteLine($"HasActiveAccess exception: {ex.Message}");
+                return false;
             }
         }
+
+        public string GetSubCodeType(string code)
+        {
+            try
+            {
+                var subcription = _conn.WebScriptions.FirstOrDefault(cd => cd.StatusToken == code);
+
+                if (subcription != null)
+                    return subcription.PaymentStatus;
+
+                return "Invalid Code";
+
+            }
+            catch (Exception ex)
+            {
+
+                return "";
+            }
+           
+        }
+
+
     }
 }

@@ -50,6 +50,9 @@ namespace Sentrix.Models
 
         [JsonPropertyName("IsTrailMode")]
         public bool IsTrailMode { get; set; }
+        [JsonPropertyName("IsAppLoggedIn")]
+        public bool IsAppLoggedIn { get; set; }
+
 
 
     }
