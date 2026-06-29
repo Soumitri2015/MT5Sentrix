@@ -1,4 +1,5 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using NLog.Time;
 using Sentrix.EntityModel;
 //using Sentrix.Models;
 using System;
@@ -18,11 +19,15 @@ namespace Sentrix.Repositories
 
         public void AddUser(Users user, bool isAdmin = false)
         {
+            // A transaction ensures that if the WebUser fails to save, the local User is rolled back, preventing mismatched databases.
+            using var transaction = _conn.Database.BeginTransaction();
             try
             {
+                
                 _conn.Users.Add(user);
-                _conn.SaveChanges();
+                _conn.SaveChanges(); 
 
+                
                 var roleId = isAdmin ? 2 : 1;
                 var userRole = new UserRoles
                 {
@@ -31,14 +36,39 @@ namespace Sentrix.Repositories
                 };
                 _conn.UserRoles.Add(userRole);
                 _conn.SaveChanges();
+
+
+                var webUser = new WebUsers
+                {
+                    Id = user.Id.ToString(),
+                    FullName = user.UserName,
+                    IsActive = user.IsActive,
+                    CreatedAt = user.CreatedDate,
+                    UserName = user.UserName,
+                    Email = user.Email,
+                    NormalizedEmail = user.Email?.ToUpper(),
+                    PasswordHash = user.Password,
+                    Status = user.IsActive,
+
+
+                    PhoneNumberConfirmed = false,
+                    TwoFactorEnabled = false,
+                    AccessFailedCount = 0
+                };
+
+                _conn.WebUsers.Add(webUser); 
+                _conn.SaveChanges();
+
+           
+                transaction.Commit();
             }
             catch (Exception)
             {
-
+                transaction.Rollback();
                 throw;
             }
-
         }
+        
 
         public int GetUser(string email, string password)
         {
@@ -47,7 +77,7 @@ namespace Sentrix.Repositories
                 var user = _conn.Users.FirstOrDefault(u => u.Email == email && u.Password == password);
                 return user != null ? user.Id : -1;
             }
-            catch (Exception ex)
+            catch (Exception ex)    
             {
 
                 Console.WriteLine(ex.Message);
@@ -205,6 +235,22 @@ namespace Sentrix.Repositories
                 return "";
             }
            
+        }
+
+        public async Task<bool> IsUserBanned(string userId)
+        {
+            try
+            {
+                var isUserBnned = _conn.WebUsers.FirstOrDefault(u => u.Id == userId);
+                return isUserBnned != null? isUserBnned.IsActive : false;
+
+            }
+            catch (Exception)
+            {
+
+                throw;
+            }
+
         }
 
 

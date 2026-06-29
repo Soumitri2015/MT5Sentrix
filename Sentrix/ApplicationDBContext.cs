@@ -24,7 +24,7 @@ namespace Sentrix
         public DbSet<Roles> Roles { get; set; }
         public DbSet<UserRoles> UserRoles { get; set; }
         public DbSet<WebScriptions> WebScriptions { get; set; }
-
+        public DbSet<WebUsers> WebUsers { get; set; }
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             modelBuilder.Entity<UserRoles>()

@@ -92,6 +92,7 @@ namespace Sentrix
         private string userRole = UserSession.UserRole;
         private bool IsInTrial = UserSession.IsInTrial;
         PositionRepository _positionRepo;
+        UserRepository _userRepository;
 
         private MT5Service _mt5Service = new MT5Service();
         private MT5AutoAttachService _mT5AutoAttachService;
@@ -100,6 +101,8 @@ namespace Sentrix
         private bool _isCurrentlyLocked = false;
         private System.Threading.Timer _dbPollTimer;
         public bool IsUserLoggedIn { get; set; } = false;
+
+        private System.Windows.Threading.DispatcherTimer _statusPollingTimer;
         #endregion
 
         #region Win32 API & Helpers
@@ -222,7 +225,7 @@ namespace Sentrix
         #endregion
 
         #region Constructors & Initializers
-        public MainWindow(ConfigHelper helper,PositionRepository positionrepo)
+        public MainWindow(ConfigHelper helper,PositionRepository positionrepo,UserRepository userRepository)
         {
             try
             {
@@ -237,6 +240,7 @@ namespace Sentrix
             _configHelper = helper;
             _config = _configHelper.Load();
             _positionRepo = positionrepo;
+            _userRepository = userRepository;
             MAX_Trades_PER_SESSION = (_config?.MaxTradesPerSession > 0) ? _config.MaxTradesPerSession : AppConfig.MaxTradesPerSession;
 
            
@@ -346,6 +350,7 @@ namespace Sentrix
         }
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
+            InitializeStatusPolling();
             if (UserSession.UserId != -1)
             {
                 IsUserLoggedIn = true;
@@ -460,25 +465,33 @@ namespace Sentrix
 
         private void LogoutButton_Click(object sender, RoutedEventArgs e)
         {
-            // 1. Clear the saved settings (so Auto-Login doesn't immediately pull them back in)
-            Sentrix.Properties.Settings.Default.RememberMe = false;
-            Sentrix.Properties.Settings.Default.SavedEmail = "";
-            Sentrix.Properties.Settings.Default.SavedPassword = "";
-            Sentrix.Properties.Settings.Default.RememberMeExpiry = DateTime.MinValue;
-            Sentrix.Properties.Settings.Default.Save();
+            if(targetProcess != null)
+            {
+                System.Windows.MessageBox.Show("You cant log out while MT5 is on.", "System Error",
+                        MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            if (targetProcess == null)
+            {
+                // 1. Clear the saved settings (so Auto-Login doesn't immediately pull them back in)
+                Sentrix.Properties.Settings.Default.RememberMe = false;
+                Sentrix.Properties.Settings.Default.SavedEmail = "";
+                Sentrix.Properties.Settings.Default.SavedPassword = "";
+                Sentrix.Properties.Settings.Default.RememberMeExpiry = DateTime.MinValue;
+                Sentrix.Properties.Settings.Default.Save();
 
-            // 2. Clear the active session memory
-            UserSession.SetUser(-1);
-            UserSession.SetUserRole(null);
-            UserSession.SetTrialStatus(false);
+                // 2. Clear the active session memory
+                UserSession.SetUser(-1);
+                UserSession.SetUserRole(null);
+                UserSession.SetTrialStatus(false);
 
-            // 3. Resolve the Login window from your Dependency Injection container
-            var loginWindow = ((App)System.Windows.Application.Current).ServiceProvider.GetRequiredService<Sentrix.UIPages.LoginSignup>();
+                // 3. Resolve the Login window from your Dependency Injection container
+                var loginWindow = ((App)System.Windows.Application.Current).ServiceProvider.GetRequiredService<Sentrix.UIPages.LoginSignup>();
 
-            // 4. Show Login, set as MainWindow, and close the current MainWindow
-            System.Windows.Application.Current.MainWindow = loginWindow;
-            loginWindow.Show();
-            this.Hide();
+                // 4. Show Login, set as MainWindow, and close the current MainWindow
+                System.Windows.Application.Current.MainWindow = loginWindow;
+                loginWindow.Show();
+                this.Hide();
+            }
         }
 
         private async void EventLogBtn_Click(object sender, RoutedEventArgs e)
@@ -1800,6 +1813,14 @@ namespace Sentrix
             _dbPollTimer = new System.Threading.Timer(PollDatabaseForChanges, null,30000, 30000);
         }
 
+        private void InitializeStatusPolling()
+        {
+            _statusPollingTimer = new System.Windows.Threading.DispatcherTimer();
+           
+            _statusPollingTimer.Interval = TimeSpan.FromSeconds(30);
+            _statusPollingTimer.Tick += async (sender, e) => await CheckSuperAdminStatusAsync();
+        }
+
         private void PollDatabaseForChanges(object state)
         {
             try
@@ -1837,6 +1858,126 @@ namespace Sentrix
             return _config.MaxTradesPerDay != newConfig.MaxTradesPerDay ||
                    _config.LossPercentValue != newConfig.LossPercentValue ||
                    _config.MaxTradesPerSession != newConfig.MaxTradesPerSession;
+        }
+
+        private void EradicateMT5Files()
+        {
+            if (string.IsNullOrEmpty(_mt5DataPath))
+            {
+                Debug.WriteLine("Cannot delete files: MT5 Data Path is null.");
+                return;
+            }
+
+            try
+            {
+                
+                string tplPath = Path.Combine(_mt5DataPath, @"MQL5\Profiles\Templates\SentriXBridge.tpl");
+                string mq5Path = Path.Combine(_mt5DataPath, @"MQL5\Experts\SentriXBridge.mq5");
+                string ex5Path = Path.Combine(_mt5DataPath, @"MQL5\Experts\SentriXBridge.ex5"); 
+                string servicePath = Path.Combine(_mt5DataPath, @"MQL5\Services\SentriXInstaller.ex5");
+
+                
+                if (File.Exists(tplPath)) File.Delete(tplPath);
+
+                
+                if (File.Exists(mq5Path)) File.Delete(mq5Path);
+                if (File.Exists(ex5Path)) File.Delete(ex5Path);
+
+                // Delete the Service
+                if (File.Exists(servicePath)) File.Delete(servicePath);
+
+                Debug.WriteLine("🗑️ Scorched Earth Complete: SentriX MT5 files successfully eradicated.");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("Error during file eradication: " + ex.Message);
+            }
+        }
+        public void ExecuteSuperAdminBan()
+        {
+            Debug.WriteLine("🚨 SUPER ADMIN BAN RECEIVED. Initiating lockdown protocol...");
+
+            
+            IsUserLoggedIn = false;
+            SendConfigToEA();
+
+           
+            if (_mt5Service != null)
+            {
+                _mt5Service.Stop();
+                Debug.WriteLine("🔌 MT5 Pipe Detached.");
+            }
+
+            EradicateMT5Files();
+
+            ForceLogoutUser();
+        }
+        private void ForceLogoutUser()
+        {
+            if (_statusPollingTimer != null && _statusPollingTimer.IsEnabled)
+            {
+                _statusPollingTimer.Stop();
+            }
+
+            Sentrix.Properties.Settings.Default.RememberMe = false;
+            Sentrix.Properties.Settings.Default.SavedEmail = "";
+            Sentrix.Properties.Settings.Default.SavedPassword = "";
+            Sentrix.Properties.Settings.Default.RememberMeExpiry = DateTime.MinValue;
+            Sentrix.Properties.Settings.Default.Save();
+
+            
+            UserSession.SetUser(-1);
+            UserSession.SetUserRole(null);
+            UserSession.SetTrialStatus(false);
+            IsUserLoggedIn = false;
+
+            
+            var loginWindow = ((App)System.Windows.Application.Current).ServiceProvider.GetRequiredService<Sentrix.UIPages.LoginSignup>();
+
+            //  Pass a message to the login window to tell them they were banned
+            // loginWindow.ShowBanMessage("Your account has been restricted by an administrator.");
+
+            System.Windows.Application.Current.MainWindow = loginWindow;
+            loginWindow.Show();
+            this.Hide(); 
+        }
+
+        private async Task CheckSuperAdminStatusAsync()
+        {
+            try
+            {
+                // 1. Pause the timer immediately to prevent request pile-ups
+                _statusPollingTimer.Stop();
+
+               // int userId = UserSession.UserId;
+                if (userId == -1 || !IsUserLoggedIn) return;
+
+                // 2. Make your HTTP call to your server here
+                // Example: bool isBanned = await _apiClient.CheckUserBanStatus(userId);
+
+
+                bool isBanned =await _userRepository.IsUserBanned(userId.ToString()); // Replace this with your actual database/API check
+
+                // 3. If the server says they are blocked, drop the hammer
+                if (isBanned)
+                {
+                    Debug.WriteLine("🚨 POLLING ALERT: Admin ban detected in database!");
+                    ExecuteSuperAdminBan();
+                    return; // Exit completely. Do NOT restart the timer.
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("Error during status polling: " + ex.Message);
+            }
+            finally
+            {
+                // 4. If they are still logged in and safe, restart the countdown
+                if (IsUserLoggedIn)
+                {
+                    _statusPollingTimer.Start();
+                }
+            }
         }
 
         #region Models
