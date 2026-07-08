@@ -277,6 +277,7 @@ namespace Sentrix
 
             InitialiseAutoAttach();
             initialiseMT5Service();
+            
            // SetupTrayIcon();
         }
         #endregion
@@ -355,6 +356,7 @@ namespace Sentrix
             {
                 IsUserLoggedIn = true;
                 SendConfigToEA();
+                _statusPollingTimer.Start();
             }
             else
             {
@@ -1811,6 +1813,7 @@ namespace Sentrix
         private void StartDatabasePolling()
         {
             _dbPollTimer = new System.Threading.Timer(PollDatabaseForChanges, null,30000, 30000);
+            //InitializeStatusPolling();
         }
 
         private void InitializeStatusPolling()
@@ -1959,7 +1962,7 @@ namespace Sentrix
                 bool isBanned =await _userRepository.IsUserBanned(userId.ToString()); // Replace this with your actual database/API check
 
                 // 3. If the server says they are blocked, drop the hammer
-                if (isBanned)
+                if (!isBanned)
                 {
                     Debug.WriteLine("🚨 POLLING ALERT: Admin ban detected in database!");
                     ExecuteSuperAdminBan();

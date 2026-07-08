@@ -15,7 +15,13 @@ namespace Sentrix.Repositories
     public class UserRepository
     {
         public ApplicationDBContext _conn;
-        public UserRepository(ApplicationDBContext context) { _conn = context; }
+        public readonly IDbContextFactory<ApplicationDBContext> _contextFactory;
+        public UserRepository(ApplicationDBContext context, IDbContextFactory<ApplicationDBContext> contextFactory = null)
+        {
+            _conn = context;
+            _contextFactory = contextFactory;
+        }
+
 
         public void AddUser(Users user, bool isAdmin = false)
         {
@@ -49,7 +55,7 @@ namespace Sentrix.Repositories
                     NormalizedEmail = user.Email?.ToUpper(),
                     PasswordHash = user.Password,
                     Status = user.IsActive,
-
+                    LockoutEnabled = true,
 
                     PhoneNumberConfirmed = false,
                     TwoFactorEnabled = false,
@@ -62,8 +68,9 @@ namespace Sentrix.Repositories
            
                 transaction.Commit();
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                Console.Write(ex);
                 transaction.Rollback();
                 throw;
             }
@@ -241,8 +248,9 @@ namespace Sentrix.Repositories
         {
             try
             {
-                var isUserBnned = _conn.WebUsers.FirstOrDefault(u => u.Id == userId);
-                return isUserBnned != null? isUserBnned.IsActive : false;
+                using var context = _contextFactory.CreateDbContext();
+                var isUserBnned = context.WebUsers.AsNoTracking().FirstOrDefault(u => u.Id == userId);
+                return isUserBnned ?.Status ?? false;
 
             }
             catch (Exception)

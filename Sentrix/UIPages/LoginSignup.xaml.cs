@@ -18,6 +18,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using MessageBox = System.Windows.MessageBox;
 using Sentrix.Properties;
+using Microsoft.IdentityModel.Tokens;
 
 namespace Sentrix.UIPages
 {
@@ -187,7 +188,7 @@ namespace Sentrix.UIPages
                     UserName = SignUpName.Text,
                     Email = SignUpEmail.Text,
                     Password = SignUpPassword.Password,
-                    SubCode = SignUpSubscriptionCode.Text ,
+                    SubCode =  SignUpSubscriptionCode.Text ,
                     IsActive = true
                 });
             }
