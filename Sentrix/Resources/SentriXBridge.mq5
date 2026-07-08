@@ -198,7 +198,7 @@ void OnTick()
       ManagePositions1R(); // You will need to write this helper function
    }
    
-   /*if(IsNewBar(PERIOD_CURRENT))
+   if(IsNewBar(PERIOD_CURRENT))
    {
       int signal = CheckCandlePattern(_Symbol,PERIOD_CURRENT);
 
@@ -214,7 +214,7 @@ void OnTick()
          ExecuteAutomatedTrade(_Symbol,-1);
          // TODO: Add H4/Daily Trend Filter check here
       }
-   }*/
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -600,7 +600,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
                   g_CurrentDailyTrades++;
                   if(activeSession == "London")       g_TradesLondon++;
                   else if(activeSession == "NewYork") g_TradesNewYork++;
-                  EnforceManualTradeRisk(trans.position,tradeSymbol,tradeDirection);
+                  /*EnforceManualTradeRisk(trans.position,tradeSymbol,tradeDirection);*/
                   SaveStateOffline();
                   PushDataToCSharp();
                   
