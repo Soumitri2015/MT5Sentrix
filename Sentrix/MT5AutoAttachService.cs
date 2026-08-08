@@ -112,6 +112,7 @@ namespace Sentrix
                     "window=0\r\n" +
                     "login=0\r\n" +
                     "symbol=EURUSD\r\n" +
+
                     "</expert>\r\n";
 
                 content = content.Replace("</chart>", injection + "</chart>");

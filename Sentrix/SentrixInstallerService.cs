@@ -241,7 +241,7 @@ namespace Sentrix
                     File.AppendAllText(iniPath,
                         "\r\n[Experts]\r\n" +
                         "AllowLiveTrading=1\r\n" +
-                        "AllowDllImport=0\r\n" +
+                        "AllowDllImport=1\r\n" +
                         "Enabled=1\r\n" +
                         "Account=0\r\n", Encoding.Unicode);
                 }

@@ -113,6 +113,7 @@ void OnDeinit(const int reason)
 
 void PushDataToCSharp()
 {
+   if(MQLInfoInteger(MQL_TESTER)) return;
    if(g_pipe == INVALID_HANDLE) return;
 
    string json = BuildJSON();
@@ -174,6 +175,22 @@ void OnTimer()
 
 void OnTick() 
 {
+            bool timeWindowAllowed = IsCurrentTimeAllowedWindow();
+         string activeSession   = GetActiveSession();
+         g_SessionActive        = g_SessionActive && timeWindowAllowed;
+         //Print("g_SessionActive is ------"+g_SessionActive);
+
+         int activeSessionTradeCount = 0;
+         if(activeSession == "London")        activeSessionTradeCount = g_TradesLondon;
+         else if(activeSession == "NewYork")  activeSessionTradeCount = g_TradesNewYork;
+
+         bool violateSession       = !g_SessionActive;
+         bool violateDailyTrades   = (g_MaxTradesDaily  > 0 && g_CurrentDailyTrades    >= g_MaxTradesDaily);
+         bool violateSessionTrades = (g_MaxTradeSession > 0 && activeSessionTradeCount >= g_MaxTradeSession);
+         if(violateSession || violateDailyTrades || violateSessionTrades)
+         {
+               return;
+         }
    
    if(g_SessionActive && g_MaxLossPercent >0){
       double balance = AccountInfoDouble(ACCOUNT_BALANCE);
@@ -198,7 +215,27 @@ void OnTick()
       ManagePositions1R(); // You will need to write this helper function
    }
    
-   if(IsNewBar(PERIOD_CURRENT))
+   ENUM_TIMEFRAMES tfs[] = {PERIOD_M1,PERIOD_M5,PERIOD_M15, PERIOD_M30,PERIOD_H1,PERIOD_H4};
+   for(int i=0;i<ArraySize(tfs);i++)
+     {
+         if(IsNewBar(tfs[i]))
+         {
+            int signal = CheckCandlePattern(_Symbol, tfs[i]);
+   
+            if(signal == 1)
+            {
+               //Print("📈 Phase 2: Bullish Pattern Detected on ", EnumToString(tfs[i]));
+               ExecuteAutomatedTrade(_Symbol, 1, tfs[i]); 
+            }
+            else if(signal == -1)
+            {
+               //Print("📉 Phase 2: Bearish Pattern Detected on ", EnumToString(tfs[i]));
+               ExecuteAutomatedTrade(_Symbol, -1, tfs[i]);
+            }
+         }
+     }
+   
+   /*if(IsNewBar(PERIOD_CURRENT))
    {
       int signal = CheckCandlePattern(_Symbol,PERIOD_CURRENT);
 
@@ -214,7 +251,7 @@ void OnTick()
          ExecuteAutomatedTrade(_Symbol,-1);
          // TODO: Add H4/Daily Trend Filter check here
       }
-   }
+   }*/
 }
 
 //+------------------------------------------------------------------+
@@ -503,10 +540,13 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
       int sigM15 = CheckCandlePattern(tradeSymbol, PERIOD_M15);
       int sigM30 = CheckCandlePattern(tradeSymbol, PERIOD_M30);
       int sigH1  = CheckCandlePattern(tradeSymbol, PERIOD_H1);
+      int sigM1 = CheckCandlePattern(tradeSymbol, PERIOD_M1);
+      int sigM5 = CheckCandlePattern(tradeSymbol, PERIOD_M5);
+      int sigH4 = CheckCandlePattern(tradeSymbol, PERIOD_H4);
       
       // Did ANY of the allowed timeframes have the correct pattern?
       bool hasValidSetup = false;
-      if(sigM15 == tradeDirection || sigM30 == tradeDirection || sigH1 == tradeDirection)
+      if(sigM1 == tradeDirection || sigM5 == tradeDirection ||sigM15 == tradeDirection || sigM30 == tradeDirection || sigH1 == tradeDirection || sigH4 == tradeDirection)
       {
          hasValidSetup = true;
       }
@@ -562,15 +602,19 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
                // ✅ 2. NEW: Add the Phase 2 Pattern Check to Gate 2!
                string tradeSymbol = trans.symbol; 
                int tradeDirection = (dealType == DEAL_TYPE_BUY) ? 1 : -1;
-               
+               int sigM1 = CheckCandlePattern(tradeSymbol, PERIOD_M1);
+               int sigM5 = CheckCandlePattern(tradeSymbol, PERIOD_M5);
                int sigM15 = CheckCandlePattern(tradeSymbol, PERIOD_M15);
                int sigM30 = CheckCandlePattern(tradeSymbol, PERIOD_M30);
                int sigH1  = CheckCandlePattern(tradeSymbol, PERIOD_H1);
                
-               bool hasValidSetup = (sigM15 == tradeDirection || sigM30 == tradeDirection || sigH1 == tradeDirection);
+              
+               int sigH4 = CheckCandlePattern(tradeSymbol, PERIOD_H4);
+               
+               bool hasValidSetup = (sigM1 == tradeDirection||sigM5== tradeDirection||sigM15 == tradeDirection || sigM30 == tradeDirection || sigH1 == tradeDirection|| sigH4 == tradeDirection);
 
                // 3. MASTER BLOCK CHECK: If limits are broken OR pattern is invalid, KILL IT.
-               if(violateSession || violateDailyTrades || violateSessionTrades || !hasValidSetup)
+               if(sigM1 == tradeDirection || sigM5 == tradeDirection ||sigM15 == tradeDirection || sigM30 == tradeDirection || sigH1 == tradeDirection || sigH4 == tradeDirection)
                {
                   string reason = violateSession       ? "Outside Session Window"
                                 : violateDailyTrades   ? "Daily Limit Reached"
@@ -600,7 +644,8 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
                   g_CurrentDailyTrades++;
                   if(activeSession == "London")       g_TradesLondon++;
                   else if(activeSession == "NewYork") g_TradesNewYork++;
-                  /*EnforceManualTradeRisk(trans.position,tradeSymbol,tradeDirection);*/
+                  
+                  EnforceManualTradeRisk(trans.position,tradeSymbol,tradeDirection);
                   SaveStateOffline();
                   PushDataToCSharp();
                   
@@ -819,7 +864,7 @@ void LogEvent(string message){
 //+------------------------------------------------------------------+
 
 
-void SaveConfigOffline(){
+void  SaveConfigOffline(){
 
    int handle = FileOpen(CONFIG_FILE, FILE_WRITE | FILE_TXT | FILE_ANSI);
    
@@ -1093,7 +1138,7 @@ string GetActiveSession()
    if(currentMinutesET >= 480 && currentMinutesET <= 690)
    {
       g_SessionActive= true;
-     // printf("Current Session Name NewYork");
+      //printf("Current Session Name NewYork");
       return "NewYork"; // Matches your C# exact string
       
    }
@@ -1220,7 +1265,7 @@ bool IsCurrentTimeAllowedWindow()
    }
    
    // If the loop finishes and no window matched the current time, block it
-   Print("🚨 SentriX: Time [", currentMin, " mins] is outside all allowed windows.");
+   //Print("🚨 SentriX: Time [", currentMin, " mins] is outside all allowed windows.");
    return false; 
 }
 
@@ -1281,6 +1326,7 @@ void UpdateUIProtection()
 
 void ApplyUIBlocks()
 {
+   if(MQLInfoInteger(MQL_TESTER)) return;
    long currChart = ChartFirst();
    
    while(currChart >= 0)
@@ -1288,11 +1334,14 @@ void ApplyUIBlocks()
       string chartSym = ChartSymbol(currChart);
       
       // 1. Check if this specific chart has a valid setup on any timeframe
+      int sigM1 = CheckCandlePattern(chartSym, PERIOD_M1);
+      int sigM5 = CheckCandlePattern(chartSym, PERIOD_M5);
       int sigM15 = CheckCandlePattern(chartSym, PERIOD_M15);
       int sigM30 = CheckCandlePattern(chartSym, PERIOD_M30);
       int sigH1  = CheckCandlePattern(chartSym, PERIOD_H1);
-      
-      bool hasAnySetup = (sigM15 != 0 || sigM30 != 0 || sigH1 != 0);
+       int sigH4 = CheckCandlePattern(chartSym, PERIOD_H4);
+
+      bool hasAnySetup = (sigM1 != 0||sigM5!= 0||sigM15 != 0 || sigM30 != 0 || sigH1 != 0 || sigH4 !=0);
       
       // 2. Check your existing session limits
       bool violateSession = !(g_SessionActive && IsCurrentTimeAllowedWindow()); 
@@ -1350,6 +1399,7 @@ void RemoveUIBlocks()
 
 void KillNewOrderWindow()
 {
+   if(MQLInfoInteger(MQL_TESTER)) return;
    // Check Session Limits
    bool violateSession = !(g_SessionActive && IsCurrentTimeAllowedWindow()); 
    bool violateDaily   = (g_MaxTradesDaily > 0 && g_CurrentDailyTrades >= g_MaxTradesDaily);
@@ -1359,12 +1409,15 @@ void KillNewOrderWindow()
    bool violateSessionTrades = (g_MaxTradeSession > 0 && sessionTrades >= g_MaxTradeSession);
 
    // Check if the CURRENT chart they are looking at has a setup
+   int sigM1 = CheckCandlePattern(_Symbol, PERIOD_M1);
+   int sigM5 = CheckCandlePattern(_Symbol, PERIOD_M5);
    int sigM15 = CheckCandlePattern(_Symbol, PERIOD_M15);
    int sigM30 = CheckCandlePattern(_Symbol, PERIOD_M30);
    int sigH1  = CheckCandlePattern(_Symbol, PERIOD_H1);
-   bool hasAnySetup = (sigM15 != 0 || sigM30 != 0 || sigH1 != 0);
+   int sigH4 = CheckCandlePattern(_Symbol, PERIOD_H4);
+   bool hasAnySetup = (sigM1 != 0 || sigM5 != 0 || sigM15 != 0 || sigM30 != 0 || sigH1 != 0 || sigH4 != 0);
       string blockReason = "";
-   if(violateSession) blockReason = "Outside Trading Session";
+   if(violateSession) blockReason = "Outside Trading Session"; 
    else if(violateDaily) blockReason = "Daily Max Trades Reached";
    else if(violateSessionTrades) blockReason = "Session Max Trades Reached";
    else if(!hasAnySetup) blockReason = "No 3-Candle Setup on " + _Symbol;
@@ -1395,19 +1448,66 @@ void KillNewOrderWindow()
 
 bool IsNewBar(ENUM_TIMEFRAMES timeframe)
 {
-   // static means this variable remembers its value between function calls
-   static datetime last_time = 0; 
+   static datetime lastTimeM5 =0;
+   static datetime lastTimeM1 = 0;
+   static datetime lastTimeM15 = 0;
+   static datetime lastTimeM30 = 0;
+   static datetime LastTimeH1 = 0;
+   static datetime lastTimeh4 = 0;
+   static 
+   datetime current_time = iTime(_Symbol,timeframe,0);
    
-   // Get the open time of the current active candle [0]
-   datetime current_time = iTime(_Symbol, timeframe, 0); 
-   
-   if(current_time != last_time)
+   if(timeframe == PERIOD_M1)
    {
-      last_time = current_time; // Save the new time
-      return true;              // Alarm rings! New bar detected!
+      if(current_time != lastTimeM1)
+      {
+         lastTimeM1 = current_time;
+         return true;
+      }
    }
-   
-   return false; // Still the same bar, do nothing
+   if(timeframe == PERIOD_M5)
+   {
+      if(current_time != lastTimeM5)
+        {
+         lastTimeM5 = current_time;
+         return true;
+        }
+   }
+   if(timeframe == PERIOD_M15)
+   {
+      if(current_time != lastTimeM15)
+        {
+            lastTimeM15= current_time;
+            return true;
+        }
+        
+   }
+   if(PERIOD_M30)
+     {
+         if(current_time != lastTimeM30)
+           {
+               lastTimeM30 = current_time;
+               return true;
+           }
+     }
+     if(PERIOD_H1){
+         if(current_time != LastTimeH1)
+         {
+               LastTimeH1 = current_time;
+               return true;
+         }
+     }
+     if(PERIOD_H4)
+     {
+      if(current_time != lastTimeh4)
+        {
+            lastTimeh4 = current_time;
+            return true;
+         
+        }
+     }
+     
+     return false;
 }
 
 //------------------------------------------------------------------------
@@ -1505,12 +1605,12 @@ bool HasOpenPosition(string sym){
 
 //Automated The Trade Entry and risk management
 
-void ExecuteAutomatedTrade(string sym, int tradeDirection)
+void ExecuteAutomatedTrade(string sym, int tradeDirection,ENUM_TIMEFRAMES tfs = PERIOD_CURRENT)
 {
    // 1. Safety Check: Only 1 trade per symbol at a time!
    if(HasOpenPosition(sym))
    {
-      Print("SentriX Auto: Skipped valid setup. A trade is already running on ", sym);
+      //Print("SentriX Auto: Skipped valid setup. A trade is already running on ", sym);
       return;
    }
 
@@ -1522,7 +1622,7 @@ void ExecuteAutomatedTrade(string sym, int tradeDirection)
    int orderType     = (tradeDirection == 1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
 
    // 3. Calculate Smart Stop Loss
-   double stopLoss = GetStructureStopLoss(sym, PERIOD_CURRENT, tradeDirection, 10, 20);
+   double stopLoss = GetStructureStopLoss(sym, tfs, tradeDirection, 20);
    if(stopLoss == 0) return;
 
    // 4. Calculate exactly 1% Risk Lot Size
@@ -1566,8 +1666,7 @@ void ExecuteAutomatedTrade(string sym, int tradeDirection)
    }
 }
 
-double GetStructureStopLoss(string sym, ENUM_TIMEFRAMES tf, int tradeDirection, int lookbackCandles = 10, int bufferPoints = 20)
-{
+/*{
    double point = SymbolInfoDouble(sym, SYMBOL_POINT);
    double bufferPriced = bufferPoints * point; 
    
@@ -1585,6 +1684,57 @@ double GetStructureStopLoss(string sym, ENUM_TIMEFRAMES tf, int tradeDirection, 
       if(highestIndex<0) highestIndex =1;
       double swingHigh = iHigh(sym, tf, highestIndex);
       return swingHigh + bufferPriced;
+   }
+   
+   return 0.0;
+}*/
+
+double GetStructureStopLoss(string sym, ENUM_TIMEFRAMES tf, int tradeDirection, int bufferPoints = 20)
+{
+   double point = SymbolInfoDouble(sym, SYMBOL_POINT);
+   double bufferPriced = bufferPoints * point; 
+   
+   if(tradeDirection == 1) // BULLISH (BUY) - Find most recent Swing Low
+   {
+      // Scan back up to 15 candles to find a true structural swing low (a "V" shape)
+      for(int i = 1; i <= 15; i++)
+      {
+         double currentLow = iLow(sym, tf, i);
+         double prevLow    = iLow(sym, tf, i+1);
+         double nextLow    = iLow(sym, tf, i-1);
+         
+         // If the current low is lower than the candle before it and after it, it's a swing
+         if(currentLow < prevLow && currentLow < nextLow)
+         {
+            return currentLow - bufferPriced;
+         }
+      }
+      
+      // Fallback: If no swing is found, use the lowest point of the 3-candle setup itself
+      int lowestIndex = iLowest(sym, tf, MODE_LOW, 3, 1);
+      if(lowestIndex < 0) lowestIndex = 1;
+      return iLow(sym, tf, lowestIndex) - bufferPriced;
+   }
+   else if(tradeDirection == -1) // BEARISH (SELL) - Find most recent Swing High
+   {
+      // Scan back up to 15 candles to find a true structural swing high (an inverted "V" shape)
+      for(int i = 1; i <= 15; i++)
+      {
+         double currentHigh = iHigh(sym, tf, i);
+         double prevHigh    = iHigh(sym, tf, i+1);
+         double nextHigh    = iHigh(sym, tf, i-1);
+         
+         // If the current high is higher than the candle before it and after it, it's a swing
+         if(currentHigh > prevHigh && currentHigh > nextHigh)
+         {
+            return currentHigh + bufferPriced;
+         }
+      }
+      
+      // Fallback: If no swing is found, use the highest point of the 3-candle setup itself
+      int highestIndex = iHighest(sym, tf, MODE_HIGH, 3, 1);
+      if(highestIndex < 0) highestIndex = 1;
+      return iHigh(sym, tf, highestIndex) + bufferPriced;
    }
    
    return 0.0;
@@ -1627,7 +1777,9 @@ void EnforceManualTradeRisk(ulong ticket, string sym, int tradeDirection)
    double currentVol = PositionGetDouble(POSITION_VOLUME);
    
    // 1. Calculate the Structure SL
-   double structureSL = GetStructureStopLoss(sym, PERIOD_CURRENT, tradeDirection, 10, 20);
+   //double structureSL = GetStructureStopLoss(sym, PERIOD_CURRENT, tradeDirection, 10, 20);
+   
+   double structureSL = GetStructureStopLoss(sym, PERIOD_CURRENT, tradeDirection, 20);
    if(structureSL == 0) return;
    
    // 2. Calculate the maximum allowed lot size for exactly 1% risk

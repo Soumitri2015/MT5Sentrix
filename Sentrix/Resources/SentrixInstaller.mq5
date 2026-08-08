@@ -31,6 +31,8 @@ void AttachBridgeToChart(long chart)
    Print("SentriX Service: Applying template to hijacked chart...");
 
    ResetLastError();
+   
+   // This will now work perfectly because your C# installer fixed the global terminal.ini settings!
    bool ok = ChartApplyTemplate(chart, TEMPLATE_NAME);
    
    NormalizeChart(chart);
@@ -40,7 +42,6 @@ void AttachBridgeToChart(long chart)
    else
       Print("Template applied successfully. Waiting for Bridge to claim chart...");
 }
-
 void DeployBridge()
 {
    long chart = FindServiceChart();
@@ -59,12 +60,21 @@ void DeployBridge()
    }
 }
 
+datetime g_lastAttachAttempt = 0;
+#define ATTACH_COOLDOWN_SECONDS 15
+
+
+
 void EnsureBridgeAlive()
 {
    long chart = FindServiceChart();
    
    if(chart == -1)
    {
+      datetime now = TimeLocal();
+      if(now -g_lastAttachAttempt < ATTACH_COOLDOWN_SECONDS)
+         return; 
+         g_lastAttachAttempt = now;
       // No log spam here! Just silently try to deploy.
       DeployBridge();
    }
