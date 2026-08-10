@@ -45,7 +45,7 @@ namespace Sentrix
                                 ConfigurationManager.ConnectionStrings["MyDbConnection"].ConnectionString;
 
             services.AddDbContextFactory<ApplicationDBContext>(options =>
-            options.UseSqlServer(connectionString));
+            options.UseNpgsql(connectionString));
             services.AddScoped<UserRepository>();
             services.AddScoped<ConfigRepository>();
             services.AddScoped<ConfigHelper>();
