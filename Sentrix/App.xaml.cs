@@ -44,7 +44,7 @@ namespace Sentrix
             var connectionString =
                                 ConfigurationManager.ConnectionStrings["MyDbConnection"].ConnectionString;
             services.AddDbContextFactory<ApplicationDBContext>(options =>
-            options.UseSqlServer(connectionString));
+            options.UseNpgsql(connectionString));
             services.AddScoped<UserRepository>();
             services.AddScoped<ConfigRepository>();
             services.AddScoped<ConfigHelper>();
@@ -141,7 +141,10 @@ namespace Sentrix
             // Load your custom icon
             try
             {
-                _trayIcon.Icon = new System.Drawing.Icon(@"C:\Users\soumy\source\repos\Sentrix\Sentrix\ChatGPT Image Dec 22, 2025, 04_42_04 PM.ico");
+                string appDirectory = AppDomain.CurrentDomain.BaseDirectory;
+                string iconPath = System.IO.Path.Combine(appDirectory, "SentriX.ico");
+
+                _trayIcon.Icon = new System.Drawing.Icon(iconPath);
             }
             catch (Exception)
             {

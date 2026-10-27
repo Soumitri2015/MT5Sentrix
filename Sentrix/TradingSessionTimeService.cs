@@ -178,6 +178,9 @@ namespace Sentrix
             TimeSpan nyStart = new TimeSpan(8, 0, 0);       // 8:00 AM ET
             TimeSpan nyEnd = new TimeSpan(11, 30, 0);       // 11:30 AM ET
 
+            TimeSpan asiaStart = new TimeSpan(18, 0, 0);   // 12:00 PM ET
+            TimeSpan asiaEnd = new TimeSpan(1, 59, 59);    // 3:59:59 PM ET
+
             // 3. Evaluate current time against the windows
             if (now >= londonStart && now <= londonEnd)
             {
@@ -185,11 +188,17 @@ namespace Sentrix
             }
             else if (now >= nyStart && now <= nyEnd)
             {
-                return "NewYork"; // Matches the MQL5 exact string (no space)
+                 return "NewYork"; // Matches the MQL5 exact string (no space)
+               
+            }
+            else if (now >= asiaStart || now <= asiaEnd) 
+            {
+                return "Asia";
             }
 
-            // Return null (or "None") if outside allowed trading hours
-            return "Outside Allowed Session";
+
+            
+            return "Asia";
         }
 
         public bool IsWithMasterESTWindow()

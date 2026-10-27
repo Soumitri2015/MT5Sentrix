@@ -57,24 +57,28 @@ namespace Sentrix
             return new AppConfigData
             {
                 MaxTradesPerDay = int.Parse(
-            ConfigurationManager.AppSettings["MaxTradesPerDay"] ?? "7"),
+                ConfigurationManager.AppSettings["MaxTradesPerDay"] ?? "7"),
 
 
-                LockMessage =
-            ConfigurationManager.AppSettings["LockMessage"] ?? "System Locked",
+                    LockMessage =
+                ConfigurationManager.AppSettings["LockMessage"] ?? "System Locked",
 
-                MaxTradesPerSession = int.Parse(
-            ConfigurationManager.AppSettings["MaxTradesPerSession"] ?? "3"),
+                    MaxTradesPerSession = int.Parse(
+                ConfigurationManager.AppSettings["MaxTradesPerSession"] ?? "3"),
 
-                LossPercentValue = double.Parse(
-            ConfigurationManager.AppSettings["LossPercentValue"] ?? "1"),
-                CloseTradesOutsideSession = bool.Parse(ConfigurationManager.AppSettings["CloseTradesOutsideSession"] ?? "false"),
+                    LossPercentValue = double.Parse(
+                ConfigurationManager.AppSettings["LossPercentValue"] ?? "1"),
+                    CloseTradesOutsideSession = bool.Parse(ConfigurationManager.AppSettings["CloseTradesOutsideSession"] ?? "false"),
+                    IsStrictCandle = bool.Parse(ConfigurationManager.AppSettings["IsStrictCandle"] ?? "false"),
+
                 TradingSessions = new Dictionary<string, List<TimeWindow>>
-        {
-            { "London", new List<TimeWindow> { new TimeWindow { StartTime="02:00", EndTime="08:00" } } },
-                    {"NewYork", new List<TimeWindow> { new TimeWindow { StartTime="08:00", EndTime="11:30" } } }
-        }
-            };
+                    {
+                        { "London", new List<TimeWindow> { new TimeWindow { StartTime="02:00", EndTime="08:00" } } },
+                            {"NewYork", new List<TimeWindow> { new TimeWindow { StartTime="08:00", EndTime="11:30" } } },
+                                { "Asia", new List<TimeWindow> { new TimeWindow { StartTime="18:00", EndTime="22:59" } } }
+
+                    }
+            };  
         }
 
         public void Save(AppConfigData config)

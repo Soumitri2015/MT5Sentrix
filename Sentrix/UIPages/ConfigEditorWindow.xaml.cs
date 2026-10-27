@@ -41,6 +41,8 @@ namespace Sentrix.UIPages
                 MaxTradesPerSessionBox.Text = config.MaxTradesPerSession.ToString();
                 CloseTradesCheck.IsChecked = config.CloseTradesOutsideSession;
                 MaxLossBox.Text = config.LossPercentValue.ToString();
+                CandleAdvanceCheck.IsChecked = config.IsStrictCandle;
+                CandleNormalCheck.IsChecked = !config.IsStrictCandle;
             }
             catch (Exception)
             {
@@ -62,6 +64,7 @@ namespace Sentrix.UIPages
                 config.MaxTradesPerSession = int.Parse(MaxTradesPerSessionBox.Text);
                 config.CloseTradesOutsideSession = CloseTradesCheck.IsChecked ?? false;
                 config.LossPercentValue = double.Parse(MaxLossBox.Text);
+                config.IsStrictCandle = CandleAdvanceCheck.IsChecked ?? false;
 
                 _configHelper.Save(config);
                 System.Windows.MessageBox.Show("Configuration saved successfully. Restart the app to apply changes.",
@@ -224,6 +227,27 @@ namespace Sentrix.UIPages
                 SessionsList.Items.Add(
                     $"{kv.Key} - {window.StartTime} - {window.EndTime}");
             }
+        }
+
+        private void CandleNormalCheck_Checked(object sender, RoutedEventArgs e)
+        {
+            if (CandleNormalCheck.IsChecked == true)
+            {
+                CandleAdvanceCheck.IsChecked = false;
+            }
+        }
+        private void CandleAdvanceCheck_Checked(object sender, RoutedEventArgs e)
+        {
+            if (CandleAdvanceCheck.IsChecked == true)
+            {
+                CandleNormalCheck.IsChecked = false;
+            }
+        }
+        private void CandleMode_Unchecked(object sender, RoutedEventArgs e)
+        {
+            
+            if (CandleNormalCheck?.IsChecked != true && CandleAdvanceCheck?.IsChecked != true)
+                CandleNormalCheck.IsChecked = true;
         }
     }
 }

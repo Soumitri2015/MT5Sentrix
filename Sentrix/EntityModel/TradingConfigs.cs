@@ -12,8 +12,9 @@ namespace Sentrix.EntityModel
         public int UserId { get; set; }
         public int MaxTradesPerDay { get; set; }
         public int MaxTradesPerSession { get; set; }
-        public decimal LossPercentvalue { get; set; }
+        public decimal LossPercentValue { get; set; }
         public string LockMessage { get; set; }
         public bool CloseTradesOutsideSession { get; set; }
+        public bool IsStrictCandle { get; set; }
     }
 }

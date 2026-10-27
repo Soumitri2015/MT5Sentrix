@@ -47,7 +47,7 @@ namespace Sentrix
         private Process targetProcess;
         private IntPtr targetHandle = IntPtr.Zero;
         private IntPtr _hookID = IntPtr.Zero;
-        private OverlayWindow overlay;
+        //private OverlayWindow overlay;
         private System.Threading.Timer foregroundCheckTimer;
 
         private System.Windows.Forms.NotifyIcon trayIcon;
@@ -98,6 +98,8 @@ namespace Sentrix
         private HashSet<long> _closingTickets = new HashSet<long>();
         private bool _isCurrentlyLocked = false;
         private System.Threading.Timer _dbPollTimer;
+        private DateTime _lastLockCheckTime = DateTime.MinValue;
+        private readonly SemaphoreSlim _dbSaveSemaphore = new SemaphoreSlim(1, 1);
         #endregion
 
         #region Win32 API & Helpers
@@ -270,6 +272,7 @@ namespace Sentrix
             });
 
             InitialiseAutoAttach();
+            
             initialiseMT5Service();
            // SetupTrayIcon();
         }
@@ -291,17 +294,12 @@ namespace Sentrix
                     // Check if that window belongs to cTrader
                     if (IsChildOfTarget(windowUnderMouse))
                     {
-                        if (this.overlay != null && this.overlay.BlockClicks)
+                        if (_isCurrentlyLocked)
                         {
-                            // Show feedback without blocking
                             System.Windows.Application.Current.Dispatcher.BeginInvoke(new Action(() =>
                             {
                                 StatusText.Text = "Click Intercepted!";
                                 ShowBlockSessionAlert(_currentSession);
-                                if (overlay != null && overlay.IsVisible)
-                                {
-                                    overlay.ShowTempAlert("Max X trades for this session reached  \r\n\r\n  Trading locked until next session");
-                                }
                             }));
 
                             return (IntPtr)1; // Block the click
@@ -555,6 +553,10 @@ namespace Sentrix
                 {
                     Dispatcher.Invoke(() =>
                     {
+                        if (!_isCurrentlyLocked)
+                        {
+                            StatusText.Text = "MT5 Connected ✓";
+                        }
                         Debug.WriteLine("🔌 MT5 Pipe Connected! Syncing fresh config...");
                         SendConfigToEA();
                     });
@@ -576,7 +578,7 @@ namespace Sentrix
         }
         
 
-        private void MonitorProcess(object state)
+        private async void MonitorProcess(object state)
         {
             // Check if MT5 is still alive
             if (targetProcess != null)
@@ -592,7 +594,30 @@ namespace Sentrix
                 }
             }
 
-            UpdateSettingsButtonState();
+            await UpdateSettingsButtonState();
+            if ((DateTime.UtcNow - _lastLockCheckTime).TotalSeconds >= 1)
+            {
+                _lastLockCheckTime = DateTime.UtcNow;
+
+                string activeSessionName = await _tradingSessioinTimeService.GetActiveSession(DateTime.UtcNow);
+                string newSession = string.IsNullOrEmpty(activeSessionName) ? "Outside Allowed Session" : activeSessionName;
+
+                if (_currentSession != newSession)
+                {
+                    _currentSession = newSession;
+                    if (newSession != "Outside Allowed Session")
+                    {
+                        await RegisterSession(newSession);
+                    }
+                    SendConfigToEA();
+                }
+
+                // Evaluate lock dynamically as time ticks (debounced internally)
+                await Dispatcher.InvokeAsync(async () =>
+                {
+                    await EvaluateAndApplyLockState(_currentSession);
+                });
+            }
 
             // Look for MT5 process (terminal64 = 64-bit MT5, terminal = 32-bit)
             if (targetProcess == null)
@@ -608,24 +633,22 @@ namespace Sentrix
                 {
                     targetProcess = validProcess;
                     targetHandle = validProcess.MainWindowHandle;
+                    //_mt5Service?.Stop();
+                    //_mt5Service?.Start(); // Ensure the pipe server is running
+
 
                     string exePath = MT5AutoAttachService.GetMT5ExePath(validProcess);
                     _mT5AutoAttachService.EnsureEAAttached(validProcess, exePath);
                     if (!_mt5Service.IsConnected)
                         _mt5Service.Restart();
 
-                    Dispatcher.Invoke(async () =>
+                    await Dispatcher.Invoke(async () =>
                     {
                         this.Show();
                         StatusText.Text = "MT5 detected — waiting for EA...";
                         SettingsBtn.IsEnabled = true;
 
-                        if (overlay == null)
-                        {
-                            overlay = new OverlayWindow(targetHandle);
-                            overlay.Show();
-                            await EvaluateAndApplyLockState(_currentSession);
-                        }
+                        await EvaluateAndApplyLockState(_currentSession);
                     });
 
                     // MT5Service is already listening on the pipe from app start.
@@ -634,34 +657,7 @@ namespace Sentrix
             }
 
             // Overlay follow logic — completely unchanged from cTrader version
-            if (targetProcess != null && overlay != null)
-            {
-                try
-                {
-                    Dispatcher.Invoke(() =>
-                    {
-                        if (!overlay.IsLoaded) return;
-
-                        IntPtr foreground = GetForegroundWindow();
-                        bool isTargetActive = foreground == targetHandle;
-
-                        if (isTargetActive)
-                        {
-                            if (!overlay.IsVisible) overlay.Show();
-                            overlay.FollowTargetZOrder();
-                        }
-                        else
-                        {
-                            if (!overlay.BlockClicks && overlay.IsVisible)
-                                overlay.Hide();
-                        }
-                    });
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"Overlay check failed: {ex.Message}");
-                }
-            }
+           
 
             // Update status text to reflect pipe connection state
             if (targetProcess != null)
@@ -671,9 +667,17 @@ namespace Sentrix
                     if (_isCurrentlyLocked)
                         return;
 
-                    if(!string.IsNullOrEmpty(_currentSession)&& _mt5Service.IsConnected) return;
+                    //if(!string.IsNullOrEmpty(_currentSession)&& _mt5Service.IsConnected) return;
+
                     if (_mt5Service.IsConnected)
-                        StatusText.Text = "MT5 Connected ✓";
+                    {
+
+                        string sessionInfo = !string.IsNullOrEmpty(_currentSession) && _currentSession != "Outside Allowed Session "
+                        ? $" ({_currentSession})"
+                        : "";
+
+                        //StatusText.Text = "MT5 Connected ✓";
+                    }
                     else
                         StatusText.Text = "MT5 detected — waiting for EA...";
                 });
@@ -753,9 +757,9 @@ namespace Sentrix
                 }
                 else
                 {
-                    if (_currentSession != "OffSession")
+                    if (_currentSession != "Outside Allowed Session")
                     {
-                        _currentSession = "OffSession";
+                        _currentSession = "Outside Allowed Session";
                         Debug.WriteLine("No active session detected. Marking as OffSession.");
 
                         // You might also want to call SendConfigToEA() here so the EA knows to lock trades!
@@ -813,8 +817,11 @@ namespace Sentrix
 
         async Task SaveDailyData(List<string> positionRows, string currentSession, string eventMessage = null)
         {
+                if(!await _dbSaveSemaphore.WaitAsync(1000)) return;
             try
             {
+                if(targetProcess == null || targetProcess.HasExited || !_mt5Service.IsConnected) return;
+
                 DateTime todayDate = DateTime.Today;
 
                 if (!string.IsNullOrEmpty(eventMessage))
@@ -868,7 +875,7 @@ namespace Sentrix
 
                         string session = row.Split('|').Last().Trim();
                         Debug.WriteLine($"[TRACER 4] Attempting to save to DB. Session: {session} | isToday: {isToday}");
-                        if (session == "OffSession") continue;
+                        if (session == "Outside Allowed Session") continue;
                         if(trade.Status != "Open")
                             ShowBlockSessionAlert($"trade position status ---->{trade.Status}");
 
@@ -898,7 +905,21 @@ namespace Sentrix
                         {
                             await _positionRepo.SaveEventAsync(userId, $"➕ New {trade.Direction} on {trade.Symbol} in {session}");
                         }
+
                     }
+                        foreach(var dbPosition in todayPositions)
+                        {
+                            string key = $"{dbPosition.Symbol} | {dbPosition.EntryPrice}|{dbPosition.CreatedUtc:o}";
+                            if(!liveTradeKeys.Contains(key) && dbPosition.Status != "Deleted")
+                        {
+                            await _positionRepo.MarkPositionDeletedAsync(userId, dbPosition.Symbol, dbPosition.EntryPrice, dbPosition.CreatedUtc, dbPosition.Ticket);
+
+                            string pnlStr = dbPosition.NetProfit >= 0 ? $"+{dbPosition.NetProfit:F2}" : $"-${Math.Abs(dbPosition.NetProfit):F2}";
+                            string closeMsg = $"❌ Closed {dbPosition.Direction} on {dbPosition.Symbol}. P/L: {pnlStr}";
+                            await _positionRepo.SaveEventAsync(userId, closeMsg);
+                        }
+
+                        }
                 }
 
                 // 3. LOGGING: IDENTIFY AND LOG CLOSURES
@@ -1041,7 +1062,7 @@ namespace Sentrix
             catch { }
         }
 
-        void HandleTradeSessionDayReset(int currentPositions)
+        async Task HandleTradeSessionDayReset(int currentPositions)
         {
             if (DateTime.Today != _sessionResetDate)
             {
@@ -1050,17 +1071,16 @@ namespace Sentrix
                 _currentSession = null;
                 _tradesToday = 0;
 
-                Dispatcher.Invoke(UpdateSettingsButtonState);
+                await Dispatcher.Invoke(UpdateSettingsButtonState);
 
-                overlay?.Close();
-                overlay = null;
+                
 
                 StatusText.Text = "New trading day started. Limits reset.";
             }
 
             if (!string.IsNullOrEmpty(_currentSession) && !_sessionToday.ContainsKey(_currentSession))
             {
-                RegisterSession(_currentSession);
+               await RegisterSession(_currentSession);
             }
         }
 
@@ -1276,11 +1296,7 @@ namespace Sentrix
             Dispatcher.Invoke(() =>
             {
                 StatusText.Text = "Waiting for MT5...";
-                if (overlay != null)
-                {
-                    overlay.Close();
-                    overlay = null;
-                }
+               
                 this.Hide();
             });
         }
@@ -1329,23 +1345,36 @@ namespace Sentrix
             this.Topmost = true;
         }
 
-        private void UpdateSettingsButtonState()
+        private async Task UpdateSettingsButtonState()
         {
-
             try
             {
+                // Pass DateTime.UtcNow as required by GetActiveSession(DateTime utcNow)
+                string activeSession = await _tradingSessioinTimeService.GetActiveSession(DateTime.UtcNow);
+                bool isInsideEST = !string.IsNullOrEmpty(activeSession) && activeSession != "Outside Allowed Session"; ;
 
-                bool isInsideEST = _tradingSessioinTimeService.IsWithMasterESTWindow();
+                //Debug.WriteLine(isInsideEST ? "Inside EST trading window" : "Outside EST trading window");
 
                 bool isMetaraderRunning =
                     targetProcess != null &&
                     !targetProcess.HasExited &&
                     targetHandle != IntPtr.Zero;
+                //Debug.WriteLine(isMetaraderRunning ? "MetaTrader is running" : "MetaTrader is not running right now");
 
                 Dispatcher.Invoke(() =>
                 {
-                    bool canEdit = !isInsideEST && !isMetaraderRunning;
-                    SettingsBtn.IsEnabled = isInsideEST && !isMetaraderRunning;
+                    bool canEdit = isInsideEST && !isMetaraderRunning;
+                    //Debug.WriteLine(canEdit ? "Settings button can be edite" : "Settings cant be edited");
+
+                    if (canEdit)
+                    {
+                        SettingsBtn.IsEnabled = true;
+                    }
+                    else
+                    {
+                        SettingsBtn.IsEnabled = false;
+                    }
+                    //SettingsBtn.IsEnabled = isInsideEST && !isMetaraderRunning;
 
                     if (isInsideEST)
                     {
@@ -1363,7 +1392,6 @@ namespace Sentrix
             }
             catch (Exception)
             {
-
                 throw;
             }
         }
@@ -1606,21 +1634,37 @@ namespace Sentrix
 
         private async Task EvaluateAndApplyLockState(string sessionName)
         {
-            if (string.IsNullOrEmpty(sessionName)) return;
+            //if (string.IsNullOrEmpty(sessionName)) return;
+            bool isOffSession = string.IsNullOrEmpty(sessionName) || sessionName == "Outside Allowed Session";
 
-            bool isTimeAllowed = _tradingSessioinTimeService.IsTradingAllowed(sessionName, DateTime.Now);
+
+            // bool isTimeAllowed = _tradingSessioinTimeService.IsTradingAllowed(sessionName, DateTime.Now);
+            bool isTimeAllowed = false;
             bool dayLimitReached = _tradesToday >= _config.MaxTradesPerDay;
-
+            
             bool sessionLimitReached = false;
-            lock (_sessionLockThread)
+
+            if (!isOffSession)
             {
-                if (_sessionToday.TryGetValue(sessionName, out var sessionData))
+                 isTimeAllowed = _tradingSessioinTimeService.IsTradingAllowed(sessionName, DateTime.Now);
+                lock (_sessionLockThread)
                 {
-                    sessionLimitReached = sessionData.Trades >= _config.MaxTradesPerSession;
+                    if (_sessionToday.TryGetValue(sessionName, out var sessionData))
+                    {
+                        sessionLimitReached = sessionData.Trades >= _config.MaxTradesPerSession;
+                    }
                 }
             }
 
-            bool shouldBeLocked = _isManualBlockActive || dayLimitReached || !isTimeAllowed || sessionLimitReached;
+            //lock (_sessionLockThread)
+            //{
+            //    if (_sessionToday.TryGetValue(sessionName, out var sessionData))
+            //    {
+            //        sessionLimitReached = sessionData.Trades >= _config.MaxTradesPerSession;
+            //    }
+            //}
+
+            bool shouldBeLocked = _isManualBlockActive || dayLimitReached || !isTimeAllowed || sessionLimitReached || isOffSession;
 
             if (shouldBeLocked)
             {
@@ -1664,17 +1708,7 @@ namespace Sentrix
         {
             //if (targetHandle != IntPtr.Zero) EnableWindow(targetHandle, false);
 
-            if (overlay == null && targetHandle != IntPtr.Zero)
-            {
-                overlay = new OverlayWindow(targetHandle);
-                overlay.Show();
-            }
 
-            if (overlay != null)
-            {
-                overlay.BlockClicks = false;
-                overlay.FollowTargetZOrder();
-            }
 
             StatusText.Text = message;
             BlockClicksBtn.Background = new SolidColorBrush(Colors.Red);
@@ -1685,11 +1719,7 @@ namespace Sentrix
         {
             if (targetHandle != IntPtr.Zero) EnableWindow(targetHandle, true);
 
-            if (overlay != null)
-            {
-                overlay.BlockClicks = false;
-                overlay.Hide();
-            }
+            
 
             StatusText.Text = message;
             BlockClicksBtn.Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(40, 160, 90));
@@ -1749,6 +1779,7 @@ namespace Sentrix
                 UTCTimeOffsetMinutes = utcOffsetMinutes,   // precise — handles :30 / :45 zones
                 LocalTimeHour = localHour,
                 LocalTimeMinute = localMinute,
+                RequireVisibleBody = _config.IsStrictCandle
                 //ActiveSessionName = _currentSession ?? "None",
 
             };

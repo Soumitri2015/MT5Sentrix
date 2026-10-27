@@ -30,6 +30,7 @@ int g_MaxTradesDaily = 3;
 int g_CurrentDailyTrades = 0;
 double g_MaxLossPercent = 2.0;
 bool g_Manage1R = true;
+bool g_RequireVisibleBody = true;
 ulong g_managedTickets[];
 int g_CurrentSessionTrades = 0;
 string g_ActiveSessionName = "None";
@@ -41,6 +42,7 @@ bool g_OffsetCalibrated = false;
 
 int g_TradesLondon = 0;
 int g_TradesNewYork = 0;
+int g_TradesAsian = 0;
 bool g_UIRestricted = false;
 
 
@@ -52,6 +54,14 @@ string STATE_FILE = "Sentrix_TradeState.txt";
 
 string g_AllowedSessions = "";
 string OFFLINE_QUEUE_FILE = "Sentrix_OfflineQueue.txt";
+
+#define PANEL_PREFIX "SentriX_UI_"
+string OBJ_BG       = PANEL_PREFIX + "Background";
+string OBJ_TITLE    = PANEL_PREFIX + "Title";
+string OBJ_BTN_BUY  = PANEL_PREFIX + "BuyBtn";
+string OBJ_BTN_SELL = PANEL_PREFIX + "SellBtn";
+
+
 
 
 bool IServiceChart()
@@ -65,7 +75,7 @@ bool IServiceChart()
 int OnInit()
 {
   // if(!IServiceChart()){
-    //  Print("SentriXBridgeCore: Not service chart → shutting down.");
+    //  Print("SentriXBridgeCore: Not service chart ? shutting down.");
      //    return(INIT_FAILED);
    //}
    ChartSetString(0, CHART_COMMENT, "SENTRIX_BRIDGE_SERVICE");
@@ -93,6 +103,9 @@ for(int i = 0; i < 10; i++)
    if(SymbolInfoSessionTrade(_Symbol, day, i, from, to))
       Print("Broker session index=", i, " from=", TimeToString(from), " to=", TimeToString(to));
 }
+      SyncPanelsAcrossCharts();
+     
+
    
    return INIT_SUCCEEDED;
 }
@@ -108,6 +121,7 @@ void OnDeinit(const int reason)
    if(g_cmdPipe != INVALID_HANDLE) { FileClose(g_cmdPipe); g_cmdPipe = INVALID_HANDLE; }
    ChartSetString(0, CHART_COMMENT, "");
    Print("SentriXBridge: stopped.");
+   DestroyAllPanels();
 }
 
 
@@ -145,16 +159,22 @@ void OnTimer()
    CheckDailyReset();
    UpdateUIProtection();
    KillNewOrderWindow();
+
+   // --- Cross-chart manual UI: attach the panel to any chart that doesn't have
+   //     one yet, then poll every chart's Buy/Sell button state, since
+   //     OnChartEvent only ever fires for the chart this EA is attached to. ---
+   SyncPanelsAcrossCharts();
+   PollPanelClicksAcrossCharts();
    //RunOfflineSessionWatchdog();
-   // ── 1. Connect data pipe (EA → C#) ───────────────────────────
-   // 1. Connect data pipe (EA → C#)
+   // ?? 1. Connect data pipe (EA ? C#) ???????????????????????????
+   // 1. Connect data pipe (EA ? C#)
    if(g_pipe == INVALID_HANDLE)
    {
       g_pipe = FileOpen(PIPE_NAME, FILE_READ | FILE_WRITE | FILE_BIN | FILE_ANSI|FILE_SHARE_READ|FILE_SHARE_WRITE| 0, CP_UTF8);
       if(g_pipe == INVALID_HANDLE) return;
    }
 
-   // 2. Connect command pipe (C# → EA)
+   // 2. Connect command pipe (C# ? EA)
    if(g_cmdPipe == INVALID_HANDLE)
    {
       g_cmdPipe = FileOpen(PIPE_CMD_NAME, FILE_READ | FILE_WRITE | FILE_BIN | FILE_ANSI | FILE_SHARE_READ | FILE_SHARE_WRITE, 0, CP_UTF8);
@@ -200,7 +220,7 @@ void OnTick()
          double lossPercent = ((balance - equity)/ balance)*100.0;
          if(lossPercent >= g_MaxLossPercent)
          {
-            LogEvent("🚨 SENTRIX FATAL: Daily Max Loss (" + DoubleToString(g_MaxLossPercent, 2) + "%) reached! Liquidating...");
+            LogEvent("?? SENTRIX FATAL: Daily Max Loss (" + DoubleToString(g_MaxLossPercent, 2) + "%) reached! Liquidating...");
             
             CloseAllPositions();     // You will need to write this helper function
             g_SessionActive = false; // Lock out further trades immediately
@@ -215,7 +235,7 @@ void OnTick()
       ManagePositions1R(); // You will need to write this helper function
    }
    
-   ENUM_TIMEFRAMES tfs[] = {PERIOD_M1,PERIOD_M5,PERIOD_M15, PERIOD_M30,PERIOD_H1,PERIOD_H4};
+   ENUM_TIMEFRAMES tfs[] = {PERIOD_M15, PERIOD_M30,PERIOD_H1,PERIOD_H4};
    for(int i=0;i<ArraySize(tfs);i++)
      {
          if(IsNewBar(tfs[i]))
@@ -224,13 +244,15 @@ void OnTick()
    
             if(signal == 1)
             {
-               //Print("📈 Phase 2: Bullish Pattern Detected on ", EnumToString(tfs[i]));
+               //Print("?? Phase 2: Bullish Pattern Detected on ", EnumToString(tfs[i]));
                ExecuteAutomatedTrade(_Symbol, 1, tfs[i]); 
+               break;
             }
             else if(signal == -1)
             {
-               //Print("📉 Phase 2: Bearish Pattern Detected on ", EnumToString(tfs[i]));
+               //Print("?? Phase 2: Bearish Pattern Detected on ", EnumToString(tfs[i]));
                ExecuteAutomatedTrade(_Symbol, -1, tfs[i]);
+               break;
             }
          }
      }
@@ -241,13 +263,13 @@ void OnTick()
 
       if(signal == 1)
       {
-         Print("📈 Phase 2: Bullish Pattern Detected! (Up-Down-Up)");
+         Print("?? Phase 2: Bullish Pattern Detected! (Up-Down-Up)");
          // TODO: Add H4/Daily Trend Filter check here
          ExecuteAutomatedTrade(_Symbol,1);
       }
       else if(signal == -1)
       {
-         Print("📉 Phase 2: Bearish Pattern Detected! (Down-Up-Down)");
+         Print("?? Phase 2: Bearish Pattern Detected! (Down-Up-Down)");
          ExecuteAutomatedTrade(_Symbol,-1);
          // TODO: Add H4/Daily Trend Filter check here
       }
@@ -296,11 +318,12 @@ void ReadIncomingCommand()
    
       //g_SessionActive = (StringFind(cmd,"\"SessionActive\":true") >=0);
       g_Manage1R = (StringFind(cmd,"\"Manage1R\":true") >= 0);
+      g_RequireVisibleBody = (StringFind(cmd,"\"RequireVisibleBody\":true") >= 0);
       
       string incommingSession = ExtractString(cmd,"\"ActiveSessionName\":");
       if(incommingSession != g_ActiveSessionName && incommingSession != "None" && g_ActiveSessionName != "None")
       {
-         Print("🔄 Session shifted from ", g_ActiveSessionName, " to ", incommingSession, ". Resetting session trade count.");
+         Print("?? Session shifted from ", g_ActiveSessionName, " to ", incommingSession, ". Resetting session trade count.");
          g_CurrentSessionTrades = 0;
          SaveStateOffline(); // Save the reset
       }
@@ -319,7 +342,7 @@ void ReadIncomingCommand()
       int localHour   = (int)ExtractNumber(cmd, "\"LocalTimeHour\":");
       int localMinute = (int)ExtractNumber(cmd, "\"LocalTimeMinute\":");
       
-      //Print("️ Sentrix Rules Updated | Active: ", g_SessionActive, " | Trades: ", g_CurrentDailyTrades, "/", g_MaxTradesDaily);
+      //Print("? Sentrix Rules Updated | Active: ", g_SessionActive, " | Trades: ", g_CurrentDailyTrades, "/", g_MaxTradesDaily);
       
       SaveConfigOffline();
       SaveStateOffline();
@@ -485,13 +508,17 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
                         const MqlTradeRequest &request,
                         const MqlTradeResult &result)
 {
-   // ✅ GATE 1: Intercept at ORDER level — fires before the deal executes
+   // ? GATE 1: Intercept at ORDER level — fires before the deal executes
    if(trans.type == TRADE_TRANSACTION_ORDER_ADD)
    {
       // Only block market orders (ORDER_TYPE_BUY / ORDER_TYPE_SELL)
       // Pending orders (limit/stop) are intentionally placed for future — don't block
       if(trans.order_type == ORDER_TYPE_BUY || trans.order_type == ORDER_TYPE_SELL)
       {
+      
+         if(trans.position != 0 && PositionSelectByTicket(trans.position)){
+            return;
+         }
          bool timeWindowAllowed = IsCurrentTimeAllowedWindow();
          string activeSession   = GetActiveSession();
          g_SessionActive        = g_SessionActive && timeWindowAllowed;
@@ -500,6 +527,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
          int activeSessionTradeCount = 0;
          if(activeSession == "London")        activeSessionTradeCount = g_TradesLondon;
          else if(activeSession == "NewYork")  activeSessionTradeCount = g_TradesNewYork;
+         else if(activeSession == "Asia")    activeSessionTradeCount = g_TradesAsian;
 
          bool violateSession       = !g_SessionActive;
          bool violateDailyTrades   = (g_MaxTradesDaily  > 0 && g_CurrentDailyTrades    >= g_MaxTradesDaily);
@@ -511,13 +539,13 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
                           : violateDailyTrades   ? "Daily Limit Reached"
                           : "Session Limit Reached";
 
-            string blockMsg = "🚨 SentriX PRE-BLOCK: Order rejected before execution | Reason: "
+            string blockMsg = "?? SentriX PRE-BLOCK: Order rejected before execution | Reason: "
                             + reason + " | Order: " + (string)trans.order;
             Print(blockMsg);
             LogEvent(blockMsg);
             TriggerMT5Alert(blockMsg);
 
-            // ✅ Delete the pending order before it fills
+            // ? Delete the pending order before it fills
             MqlTradeRequest deleteReq = {};
             MqlTradeResult  deleteRes = {};
             deleteReq.action = TRADE_ACTION_REMOVE;
@@ -525,9 +553,9 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
             OrderSend(deleteReq, deleteRes);
 
             if(deleteRes.retcode == TRADE_RETCODE_DONE)
-               Print("✅ SentriX: Order successfully deleted before execution. Order: ", trans.order);
+               Print("? SentriX: Order successfully deleted before execution. Order: ", trans.order);
             else
-               Print("⚠️ SentriX: Order delete failed (retcode: ", deleteRes.retcode, ") — falling back to deal-level close.");
+               Print("?? SentriX: Order delete failed (retcode: ", deleteRes.retcode, ") — falling back to deal-level close.");
 
             PushDataToCSharp();
             return;
@@ -545,8 +573,9 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
       int sigH4 = CheckCandlePattern(tradeSymbol, PERIOD_H4);
       
       // Did ANY of the allowed timeframes have the correct pattern?
-      bool hasValidSetup = false;
-      if(sigM1 == tradeDirection || sigM5 == tradeDirection ||sigM15 == tradeDirection || sigM30 == tradeDirection || sigH1 == tradeDirection || sigH4 == tradeDirection)
+         bool hasValidSetup = false;
+      //bool hasValidSetup = true;
+      if(sigM15 == tradeDirection || sigM30 == tradeDirection || sigH1 == tradeDirection || sigH4 == tradeDirection)
       {
          hasValidSetup = true;
       }
@@ -554,7 +583,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
       // If they are missing the 3-candle setup, BLOCK THE TRADE
       if(!hasValidSetup)
       {
-         string blockMsg = "🚨 SentriX PRE-BLOCK: No valid 3-Candle Pullback setup found for " + tradeSymbol + " on M15, M30, or H1.";
+         string blockMsg = "?? SentriX PRE-BLOCK: No valid 3-Candle Pullback setup found for " + tradeSymbol + " on M15, M30, or H1.";
          Print(blockMsg);
          LogEvent(blockMsg);
          TriggerMT5Alert(blockMsg);
@@ -572,7 +601,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
       }
    }
 
-   // ── GATE 2: Deal-level fallback (market orders fill too fast for Gate 1) ──
+   // ?? GATE 2: Deal-level fallback (market orders fill too fast for Gate 1) ??
    // For instant market orders, ORDER_ADD and DEAL_ADD fire almost simultaneously.
    // Gate 1 may not win the race, so we keep the close-after-open as a safety net.
   if(trans.type == TRADE_TRANSACTION_DEAL_ADD && trans.position > 0)
@@ -594,12 +623,13 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
                int activeSessionTradeCount = 0;
                if(activeSession == "London")       activeSessionTradeCount = g_TradesLondon;
                else if(activeSession == "NewYork") activeSessionTradeCount = g_TradesNewYork;
+               else if(activeSession == "Asia")   activeSessionTradeCount = g_TradesAsian;
 
                bool violateSession       = !g_SessionActive;
                bool violateDailyTrades   = (g_MaxTradesDaily  > 0 && g_CurrentDailyTrades    >= g_MaxTradesDaily);
                bool violateSessionTrades = (g_MaxTradeSession > 0 && activeSessionTradeCount >= g_MaxTradeSession);
                
-               // ✅ 2. NEW: Add the Phase 2 Pattern Check to Gate 2!
+               // ? 2. NEW: Add the Phase 2 Pattern Check to Gate 2!
                string tradeSymbol = trans.symbol; 
                int tradeDirection = (dealType == DEAL_TYPE_BUY) ? 1 : -1;
                int sigM1 = CheckCandlePattern(tradeSymbol, PERIOD_M1);
@@ -611,22 +641,23 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
               
                int sigH4 = CheckCandlePattern(tradeSymbol, PERIOD_H4);
                
-               bool hasValidSetup = (sigM1 == tradeDirection||sigM5== tradeDirection||sigM15 == tradeDirection || sigM30 == tradeDirection || sigH1 == tradeDirection|| sigH4 == tradeDirection);
+               bool hasValidSetup = (sigM15 == tradeDirection || sigM30 == tradeDirection || sigH1 == tradeDirection|| sigH4 == tradeDirection);
+               //bool hasValidSetup = true;
 
                // 3. MASTER BLOCK CHECK: If limits are broken OR pattern is invalid, KILL IT.
-               if(sigM1 == tradeDirection || sigM5 == tradeDirection ||sigM15 == tradeDirection || sigM30 == tradeDirection || sigH1 == tradeDirection || sigH4 == tradeDirection)
+               if(violateSession || violateDailyTrades  || violateSessionTrades || !hasValidSetup)
                {
                   string reason = violateSession       ? "Outside Session Window"
                                 : violateDailyTrades   ? "Daily Limit Reached"
                                 : violateSessionTrades ? "Session Limit Reached"
                                 : "Invalid 3-Candle Pattern";
 
-                  string blockMsg = "🚨 SentriX BLOCK (fallback close) | Reason: " + reason
+                  string blockMsg = "?? SentriX BLOCK (fallback close) | Reason: " + reason
                                   + " | Ticket: " + (string)trans.position;
                   Print(blockMsg);
                   LogEvent(blockMsg);
                   TriggerMT5Alert(blockMsg);
-
+   
                   // Wait a few milliseconds to ensure MT5 registers the position fully
                   for(int i = 0; i < 20; i++)
                   {
@@ -634,16 +665,17 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
                      Sleep(10);
                   }
 
-                  // ✅ Instant Close
+                  // ? Instant Close
                   ClosePositionByTicket(trans.position);
                   PushDataToCSharp();
                }
                else
                {
-                  Print("✅ SentriX Tracking: Valid trade opened | Ticket: ", trans.position);
+                  Print("? SentriX Tracking: Valid trade opened | Ticket: ", trans.position);
                   g_CurrentDailyTrades++;
                   if(activeSession == "London")       g_TradesLondon++;
                   else if(activeSession == "NewYork") g_TradesNewYork++;
+                  else if(activeSession == "Asia") g_TradesAsian++;
                   
                   EnforceManualTradeRisk(trans.position,tradeSymbol,tradeDirection);
                   SaveStateOffline();
@@ -653,7 +685,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
             }
             else if(entryType == DEAL_ENTRY_OUT)
             {
-               Print("🔒 SentriX Tracking: Trade closed | Ticket: ", trans.position);
+               Print("?? SentriX Tracking: Trade closed | Ticket: ", trans.position);
                PushDataToCSharp();
             }
          }
@@ -731,7 +763,7 @@ void ManagePositions1R()
 
       if(hit1R)
       {
-         LogEvent("🎯 1R Target hit for ticket " + (string)ticket + ". Executing 50% close and BE.");
+         LogEvent("?? 1R Target hit for ticket " + (string)ticket + ". Executing 50% close and BE.");
          
          // Calculate exactly 50% of the current lot size
          double halfVolume = volume / 2.0;
@@ -836,7 +868,7 @@ void RecoverManagedTickets()
    
    if(recoveredCount > 0)
    {
-      Print("️ SentriX Recovery: Restored memory for ", recoveredCount, " managed tickets (already at BE).");
+      Print("? SentriX Recovery: Restored memory for ", recoveredCount, " managed tickets (already at BE).");
    }
 }
 //+------------------------------------------------------------------+
@@ -871,12 +903,12 @@ void  SaveConfigOffline(){
    if(handle != INVALID_HANDLE)
    {
       
-       string data = StringFormat("%d^%d^%d^%.2f^%d^%s^%s^%d^%d^%d", 
+       string data = StringFormat("%d^%d^%d^%.2f^%d^%s^%s^%d^%d^%d^%d", 
    g_SessionActive, g_MaxTradesDaily, g_CurrentDailyTrades, 
    g_MaxLossPercent, g_Manage1R, g_AllowedSessions, 
    g_ActiveSessionName, g_MaxTradeSession,
    g_UtcOffsetMinutes,
-   g_OffsetCalibrated); 
+   g_OffsetCalibrated,g_RequireVisibleBody); 
          
       FileWrite(handle, data);
       FileClose(handle);
@@ -897,7 +929,7 @@ void LoadConfigOffline(){
          // FIX 2: Split by ^ to match the Save function
          StringSplit(data, '^', parts);
          
-         if(ArraySize(parts) >= 10)
+         if(ArraySize(parts) >= 11)
          {
             //g_SessionActive = (bool)StringToInteger(parts[0]);
             g_MaxTradesDaily =  (int)StringToInteger(parts[1]);
@@ -910,6 +942,7 @@ void LoadConfigOffline(){
             g_MaxTradeSession = (int)StringToInteger(parts[7]);
             g_UtcOffsetMinutes = (int)StringToInteger(parts[8]);
             g_OffsetCalibrated = (bool)StringToInteger(parts[9]);
+            g_RequireVisibleBody = (bool)StringToInteger(parts[10]);
            // if(g_OffsetCalibrated)
                  // Print("SentriX: Restored calibrated offset from disk: ", 
                             //  g_UtcOffsetMinutes, " min. C# not needed for time.");
@@ -1017,7 +1050,7 @@ void SaveStateOffline(){
       int currentDay = timeStruct.day;
       // Format: DailyTrades ^ SessionTrades ^ LastRecordedDay
       //string data = StringFormat("%d^%d^%d", g_CurrentDailyTrades, g_CurrentSessionTrades, currentDay );
-      string data = StringFormat("%d^%d^%d^%d", g_CurrentDailyTrades, g_TradesLondon, g_TradesNewYork, currentDay);
+      string data = StringFormat("%d^%d^%d^%d^%d", g_CurrentDailyTrades, g_TradesLondon, g_TradesNewYork, g_TradesAsian, currentDay);
       FileWrite(handle, data);
       FileClose(handle);
    }
@@ -1036,10 +1069,10 @@ void LoadStateOffline(){
         StringSplit(data, '^', parts);
          
          // FIX 1: Expect 4 parts now (Daily, London, NY, Day)
-         if(ArraySize(parts) >= 4)
+         if(ArraySize(parts) >= 5)
          {
             // FIX 2: The day is now at index 3
-            int savedDay   = (int)StringToInteger(parts[3]); 
+            int savedDay   = (int)StringToInteger(parts[4]); 
             
             MqlDateTime timeStruct;
             TimeToStruct(TimeCurrent(), timeStruct);
@@ -1051,15 +1084,18 @@ void LoadStateOffline(){
                g_CurrentDailyTrades = (int)StringToInteger(parts[0]);
                g_TradesLondon       = (int)StringToInteger(parts[1]);
                g_TradesNewYork      = (int)StringToInteger(parts[2]);
+               g_TradesAsian        = (int)StringToInteger(parts[3]);
                
-               Print("🛡️ SentriX State Loaded | Daily: ", g_CurrentDailyTrades, " | London: ", g_TradesLondon, " | NY: ", g_TradesNewYork);
+               
+               Print("??? SentriX State Loaded | Daily: ", g_CurrentDailyTrades, " | London: ", g_TradesLondon, " | NY: ", g_TradesNewYork);
             }
             else
             {
-               Print("🛡️ SentriX State: New day detected on load. Resetting counters.");
+               Print("??? SentriX State: New day detected on load. Resetting counters.");
                g_CurrentDailyTrades = 0;
                g_TradesLondon       = 0;
                g_TradesNewYork      = 0;
+               g_TradesAsian        = 0;
                SaveStateOffline();
             }
          }
@@ -1081,12 +1117,13 @@ void CheckDailyReset()
 
    if(lastDay != -1 && currentDay != lastDay)
    {
-      Print("🛡️ SentriX Guardian: 🌅 New trading day detected. Resetting local MT5 counters.");
+      Print("??? SentriX Guardian: ?? New trading day detected. Resetting local MT5 counters.");
       
       g_CurrentDailyTrades = 0;
       //g_CurrentSessionTrades = 0;
       g_TradesLondon       = 0;
       g_TradesNewYork      = 0;
+      g_TradesAsian        = 0;
       
       SaveStateOffline(); 
    }
@@ -1128,7 +1165,7 @@ string GetActiveSession()
    if(currentMinutesET >= 120 && currentMinutesET < 480)
    {
       g_SessionActive = true;
-      //printf("Current session name London");
+     // printf("Current session name London");
       return "London";
       
    }
@@ -1142,11 +1179,19 @@ string GetActiveSession()
       return "NewYork"; // Matches your C# exact string
       
    }
+   // Rule 3: Asian Session (6:00 PM to 1:59 AM ET)
+   // 18:00 = 1080 mins | 1:59 = 119 mins
+   // Because it crosses midnight, we use OR (||) instead of AND (&&)
+   if(currentMinutesET >= 1080 || currentMinutesET < 120)
+   {
+      g_SessionActive = true;
+      return "Asia";
+   }
    
-   // Outside allowed hours
-   //printf("outiside allowed hour");
-   g_SessionActive = false;
-   return "None";
+   // Outside all active global market hours (e.g., the gap between NY close and Asian open)
+    g_SessionActive = true;
+   return "NewYork";
+   
    
 }
 
@@ -1207,14 +1252,21 @@ datetime TimeEastern()
 bool IsCurrentTimeAllowedWindow()
 {
    if(MQLInfoInteger(MQL_TESTER)) return true;
+   
    // 1. If no sessions are configured, block trading
    if(StringLen(g_AllowedSessions) == 0 || g_AllowedSessions == "None") 
       return false; 
       
    int currentMin = GetLocalTimeMinutes();
+   
+   // Fetch the current active market session (e.g., "London" or "NewYork")
+   string activeSession = GetActiveSession();
+   
+   // If no session is currently active globally, we immediately block
+   if(activeSession == "None") return false;
+   
    string sessions[];
    
-   //printf("Allowed Session "+ g_AllowedSessions);
    // Split by the pipe character (e.g., london:11:30-12:55 | newyork:15:56-14:30)
    int count = StringSplit(g_AllowedSessions, '|', sessions);
    
@@ -1224,6 +1276,14 @@ bool IsCurrentTimeAllowedWindow()
       if(firstColon < 0) continue;
       
       string sessionName = StringSubstr(sessions[i], 0, firstColon);
+      
+      // THE FIX: Check if this parsed window belongs to the CURRENT active session.
+      // StringCompare with 'false' makes it case-insensitive (handles "london" vs "London")
+      if(StringCompare(sessionName, activeSession, false) != 0) 
+      {
+         continue; // Skip evaluating times for inactive sessions
+      }
+      
       string times = StringSubstr(sessions[i], firstColon + 1); 
       
       int dashPos = StringFind(times, "-");
@@ -1243,13 +1303,13 @@ bool IsCurrentTimeAllowedWindow()
       int endTotal   = (int)StringToInteger(StringSubstr(endStr, 0, endColon)) * 60 + 
                        (int)StringToInteger(StringSubstr(endStr, endColon + 1));
       
-      // Check if current time falls within this window
+      // Check if current time falls within this specific session's window
       if(startTotal <= endTotal)
       {
          // Standard daytime session
          if(currentMin >= startTotal && currentMin <= endTotal)
          {
-            //Print("✅ SentriX: Trade allowed by Daytime Session [", sessionName, "]");
+            //Print("? SentriX: Trade allowed by Daytime Session [", sessionName, "]");
             return true;
          }
       }
@@ -1258,14 +1318,14 @@ bool IsCurrentTimeAllowedWindow()
          // Midnight cross session (starts before midnight, ends the next day)
          if(currentMin >= startTotal || currentMin <= endTotal)
          {
-            //Print("✅ SentriX: Trade allowed by Midnight-Cross Session [", sessionName, "]");
+            //Print("? SentriX: Trade allowed by Midnight-Cross Session [", sessionName, "]");
             return true;
          }
       }
    }
    
-   // If the loop finishes and no window matched the current time, block it
-   //Print("🚨 SentriX: Time [", currentMin, " mins] is outside all allowed windows.");
+   // If we reach here, it means either the time didn't match the window, 
+   // or the user didn't define a window for the currently active session.
    return false; 
 }
 
@@ -1304,20 +1364,22 @@ void UpdateUIProtection()
          string reason = violateSession ? "Outside Allowed Session Time" : 
                         (violateDailyTrades ? "Daily Max Trades Reached" : "Session Max Trades Reached");
          
-         Print("🔒 SentriX: Global UI Lock Activated. Reason: ", reason);
+         Print("?? SentriX: Global UI Lock Activated. Reason: ", reason);
+         ApplyUIBlocks();
          wasGloballyBlocked = true;
       }
       //Print("Applying UI block method");
-      ApplyUIBlocks();
+      //ApplyUIBlocks();
    }
    else
    {
       if(wasGloballyBlocked)
       {
-         Print("🔓 SentriX: Global UI Lock Lifted. Trading is allowed.");
+         Print("?? SentriX: Global UI Lock Lifted. Trading is allowed.");
+         RemoveUIBlocks();
          wasGloballyBlocked = false;
       }
-      RemoveUIBlocks();
+      //RemoveUIBlocks();
    }
 }
 
@@ -1331,67 +1393,69 @@ void ApplyUIBlocks()
    
    while(currChart >= 0)
    {
-      string chartSym = ChartSymbol(currChart);
+      // PERMANENTLY disable native One-Click trading
+      if(ChartGetInteger(currChart, CHART_SHOW_ONE_CLICK))
+         ChartSetInteger(currChart, CHART_SHOW_ONE_CLICK, false);
+         
+      // Lock drag levels and context menu because trading is restricted
+      ChartSetInteger(currChart, CHART_DRAG_TRADE_LEVELS, false);
+      ChartSetInteger(currChart, CHART_CONTEXT_MENU, false);
       
-      // 1. Check if this specific chart has a valid setup on any timeframe
-      int sigM1 = CheckCandlePattern(chartSym, PERIOD_M1);
-      int sigM5 = CheckCandlePattern(chartSym, PERIOD_M5);
-      int sigM15 = CheckCandlePattern(chartSym, PERIOD_M15);
-      int sigM30 = CheckCandlePattern(chartSym, PERIOD_M30);
-      int sigH1  = CheckCandlePattern(chartSym, PERIOD_H1);
-       int sigH4 = CheckCandlePattern(chartSym, PERIOD_H4);
-
-      bool hasAnySetup = (sigM1 != 0||sigM5!= 0||sigM15 != 0 || sigM30 != 0 || sigH1 != 0 || sigH4 !=0);
+      ObjectSetInteger(currChart, OBJ_BG, OBJPROP_TIMEFRAMES, OBJ_NO_PERIODS);
+      ObjectSetInteger(currChart, OBJ_TITLE, OBJPROP_TIMEFRAMES, OBJ_NO_PERIODS);
+      ObjectSetInteger(currChart, OBJ_BTN_BUY, OBJPROP_TIMEFRAMES, OBJ_NO_PERIODS);
+      ObjectSetInteger(currChart, OBJ_BTN_SELL, OBJPROP_TIMEFRAMES, OBJ_NO_PERIODS);
       
-      // 2. Check your existing session limits
-      bool violateSession = !(g_SessionActive && IsCurrentTimeAllowedWindow()); 
-      bool violateDaily   = (g_MaxTradesDaily > 0 && g_CurrentDailyTrades >= g_MaxTradesDaily);
-      
-      string activeSession = GetActiveSession();
-      int sessionTrades = (activeSession == "London") ? g_TradesLondon : ((activeSession == "NewYork") ? g_TradesNewYork : 0);
-      bool violateSessionTrades = (g_MaxTradeSession > 0 && sessionTrades >= g_MaxTradeSession);
-
-      // 3. THE MASTER RULE: If limits are hit OR there is NO setup, lock the chart!
-      if(violateSession || violateDaily || violateSessionTrades || !hasAnySetup)
-      {
-         if(ChartGetInteger(currChart, CHART_SHOW_ONE_CLICK))
-            ChartSetInteger(currChart, CHART_SHOW_ONE_CLICK, false);
-            
-         ChartSetInteger(currChart, CHART_DRAG_TRADE_LEVELS, false);
-         ChartSetInteger(currChart, CHART_CONTEXT_MENU, false);
-      }
-      else
-      {
-         // If we are in a session AND a setup exists, unlock the chart so they can trade!
-         ChartSetInteger(currChart, CHART_DRAG_TRADE_LEVELS, true);
-         ChartSetInteger(currChart, CHART_CONTEXT_MENU, true);
-         // (We don't force One-Click open, we just leave it alone)
-      }
+      ChartRedraw(currChart);
       
       currChart = ChartNext(currChart);
    }
 
    g_UIRestricted = true;
+   
+   // Hide the Custom SentriX Panel completely
+   //ObjectSetInteger(currChart, OBJ_BG, OBJPROP_TIMEFRAMES, OBJ_NO_PERIODS);
+   //ObjectSetInteger(currChart, OBJ_TITLE, OBJPROP_TIMEFRAMES, OBJ_NO_PERIODS);
+   //ObjectSetInteger(currChart, OBJ_BTN_BUY, OBJPROP_TIMEFRAMES, OBJ_NO_PERIODS);
+   //ObjectSetInteger(currChart, OBJ_BTN_SELL, OBJPROP_TIMEFRAMES, OBJ_NO_PERIODS);
+   
+   // If you added the lot size box, hide it too:
+   // ObjectSetInteger(0, OBJ_EDIT_LOT, OBJPROP_TIMEFRAMES, OBJ_NO_PERIODS); 
+   
+   //ChartRedraw();
 }
-
 void RemoveUIBlocks()
 {
-   if(!g_UIRestricted) return; // Already lifted
+   //if(!g_UIRestricted) return; // Already lifted
 
    long currChart = ChartFirst();
    
    while(currChart >= 0)
    {
-      // Restore Drag & Drop trading levels on all charts
-      ChartSetInteger(currChart, CHART_DRAG_TRADE_LEVELS, true);
+     // PERMANENTLY disable native One-Click trading, even when trading is allowed!
+      if(ChartGetInteger(currChart, CHART_SHOW_ONE_CLICK))
+         ChartSetInteger(currChart, CHART_SHOW_ONE_CLICK, false);
       
-      // (We intentionally do NOT auto-reopen the One-Click panel here, 
-      // because the user might have had it closed manually before the block)
-      ChartSetInteger(currChart,CHART_CONTEXT_MENU, true);
+      // Restore Drag & Drop trading levels so they can manage active trades
+      ChartSetInteger(currChart, CHART_DRAG_TRADE_LEVELS, true);
+      ChartSetInteger(currChart, CHART_CONTEXT_MENU, true);
+      
+      ObjectSetInteger(currChart,OBJ_BG,OBJPROP_TIMEFRAMES,OBJ_ALL_PERIODS);
+      ObjectSetInteger(currChart,OBJ_TITLE,OBJPROP_TIMEFRAMES,OBJ_ALL_PERIODS);
+      ObjectSetInteger(currChart,OBJ_BTN_BUY,OBJPROP_TIMEFRAMES,OBJ_ALL_PERIODS);
+      ObjectSetInteger(currChart,OBJ_BTN_SELL,OBJPROP_TIMEFRAMES,OBJ_ALL_PERIODS);
+      
+      ChartRedraw(currChart);
       currChart = ChartNext(currChart);
    }
    
    g_UIRestricted = false;
+   
+   //ObjectSetInteger(0, OBJ_BG, OBJPROP_TIMEFRAMES, OBJ_ALL_PERIODS);
+   //ObjectSetInteger(0, OBJ_TITLE, OBJPROP_TIMEFRAMES, OBJ_ALL_PERIODS);
+   //ObjectSetInteger(0, OBJ_BTN_BUY, OBJPROP_TIMEFRAMES, OBJ_ALL_PERIODS);
+   //ObjectSetInteger(0, OBJ_BTN_SELL, OBJPROP_TIMEFRAMES, OBJ_ALL_PERIODS);
+   //ChartRedraw();
 }
 
 //---------------------------------------------------------------------
@@ -1415,7 +1479,8 @@ void KillNewOrderWindow()
    int sigM30 = CheckCandlePattern(_Symbol, PERIOD_M30);
    int sigH1  = CheckCandlePattern(_Symbol, PERIOD_H1);
    int sigH4 = CheckCandlePattern(_Symbol, PERIOD_H4);
-   bool hasAnySetup = (sigM1 != 0 || sigM5 != 0 || sigM15 != 0 || sigM30 != 0 || sigH1 != 0 || sigH4 != 0);
+   bool hasAnySetup = ( sigM15 != 0 || sigM30 != 0 || sigH1 != 0 || sigH4 != 0);
+   
       string blockReason = "";
    if(violateSession) blockReason = "Outside Trading Session"; 
    else if(violateDaily) blockReason = "Daily Max Trades Reached";
@@ -1435,8 +1500,8 @@ void KillNewOrderWindow()
             string winTitle = ShortArrayToString(titleBuffer);
             if(winTitle == "Order" || StringFind(winTitle, "Order: ") == 0)
             {
-               Print("🚨 SentriX: Intercepted F9 window. Reason: Limits hit OR No 3-Candle Setup.");
-               Print("🚨 SentriX: Intercepted F9 window. Reason: ", blockReason);
+               Print("?? SentriX: Intercepted F9 window. Reason: Limits hit OR No 3-Candle Setup.");
+               Print("?? SentriX: Intercepted F9 window. Reason: ", blockReason);
                SendMessageW(hwnd, WM_CLOSE, 0, 0); 
             }
          }
@@ -1454,25 +1519,9 @@ bool IsNewBar(ENUM_TIMEFRAMES timeframe)
    static datetime lastTimeM30 = 0;
    static datetime LastTimeH1 = 0;
    static datetime lastTimeh4 = 0;
-   static 
    datetime current_time = iTime(_Symbol,timeframe,0);
    
-   if(timeframe == PERIOD_M1)
-   {
-      if(current_time != lastTimeM1)
-      {
-         lastTimeM1 = current_time;
-         return true;
-      }
-   }
-   if(timeframe == PERIOD_M5)
-   {
-      if(current_time != lastTimeM5)
-        {
-         lastTimeM5 = current_time;
-         return true;
-        }
-   }
+   
    if(timeframe == PERIOD_M15)
    {
       if(current_time != lastTimeM15)
@@ -1482,7 +1531,7 @@ bool IsNewBar(ENUM_TIMEFRAMES timeframe)
         }
         
    }
-   if(PERIOD_M30)
+   if(timeframe == PERIOD_M30)
      {
          if(current_time != lastTimeM30)
            {
@@ -1490,14 +1539,14 @@ bool IsNewBar(ENUM_TIMEFRAMES timeframe)
                return true;
            }
      }
-     if(PERIOD_H1){
+     if(timeframe == PERIOD_H1){
          if(current_time != LastTimeH1)
          {
                LastTimeH1 = current_time;
                return true;
          }
      }
-     if(PERIOD_H4)
+     if(timeframe == PERIOD_H4)
      {
       if(current_time != lastTimeh4)
         {
@@ -1522,19 +1571,28 @@ int CheckCandlePattern(string sym, ENUM_TIMEFRAMES tf)
    double O2 = iOpen(sym, tf, 2);  double C2 = iClose(sym, tf, 2);
    double O3 = iOpen(sym, tf, 3);  double C3 = iClose(sym, tf, 3);
    
+   if(g_RequireVisibleBody)
+   {
+      if(!HasVisiblebody(sym, tf, 1) || !HasVisiblebody(sym, tf, 2) || !HasVisiblebody(sym, tf, 3))
+      {
+         return 0; 
+      }
+   }
+   
+   
    
 
    // --- CHECK BULLISH SETUP: Up, Down, Up ---
    bool isBullish3 = (C3 > O3); 
    bool isBearish2 = (C2 < O2); 
-   bool isBullish1 = (C1 > O1) && IsStrongCandle(sym,tf,1,0.40); 
+   bool isBullish1 = (C1 > O1); 
    
    if(isBullish3 && isBearish2 && isBullish1 && trendDirection ==1) return 1; // 1 = BUY
 
    // --- CHECK BEARISH SETUP: Down, Up, Down ---
    bool isBearish3 = (C3 < O3); 
    bool isBullish2 = (C2 > O2); 
-   bool isBearish1 = (C1 < O1) && IsStrongCandle(sym,tf,1,0.40); 
+   bool isBearish1 = (C1 < O1); 
    
    if(isBearish3 && isBullish2 && isBearish1 && trendDirection == -1) return -1; // -1 = SELL
 
@@ -1552,6 +1610,12 @@ int CheckHigherTimeframeTrend(string sym)
    double d1Open  = iOpen(sym, PERIOD_D1, 1);
    double d1Close = iClose(sym, PERIOD_D1, 1);
    
+   if(h4Open == 0 || d1Open == 0) 
+   {
+       Print("SentriX: Waiting for ", sym, " background history to synchronize...");
+       TriggerMT5Alert("SentriX: Waiting for "+ sym+ " background history to synchronize...");
+       return 0; 
+   }
    // 3. Determine directions
    bool isH4Bullish = (h4Close > h4Open);
    bool isD1Bullish = (d1Close > d1Open);
@@ -1570,9 +1634,9 @@ int CheckHigherTimeframeTrend(string sym)
 
 //Weak candle pattern
 
-bool IsStrongCandle(string sym, ENUM_TIMEFRAMES tf, int index, double minBodyPercent = 0.40)
+/*bool IsStrongCandle(string sym, ENUM_TIMEFRAMES tf, int index, double minBodyPercent = 0.40)
 {
-   double open  = iOpen(sym, tf, index);
+   //double open  = iOpen(sym, tf, index);
    double close = iClose(sym, tf, index);
    double high  = iHigh(sym, tf, index);
    double low   = iLow(sym, tf, index);
@@ -1587,6 +1651,18 @@ bool IsStrongCandle(string sym, ENUM_TIMEFRAMES tf, int index, double minBodyPer
    
    // Return true if the body is bigger than or equal to our required percentage
    return (currentBodyPercent >= minBodyPercent);
+}*/
+
+
+bool HasVisiblebody(string sym, ENUM_TIMEFRAMES tf, int index)
+{  
+   double open = iOpen(sym,tf,index);
+   double close = iClose(sym,tf,index);
+   double point = SymbolInfoDouble(sym,SYMBOL_POINT);
+   
+   double bodySize = MathAbs(open-close);
+   
+   return (bodySize >= (point *6));
 }
 
 //------------------------------------------------------------------------------------
@@ -1622,9 +1698,21 @@ void ExecuteAutomatedTrade(string sym, int tradeDirection,ENUM_TIMEFRAMES tfs = 
    int orderType     = (tradeDirection == 1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
 
    // 3. Calculate Smart Stop Loss
-   double stopLoss = GetStructureStopLoss(sym, tfs, tradeDirection, 20);
+   double stopLoss = GetStructureStopLoss(sym, tfs, tradeDirection,entryPrice,5,20,30);
    if(stopLoss == 0) return;
-
+   
+   double slDistance = MathAbs(entryPrice - stopLoss);
+   double takeProfit = 0;
+   double riskRewardRatio = 2.0;
+   
+   if(tradeDirection == 1)
+      takeProfit = entryPrice +(slDistance * riskRewardRatio);
+   else
+      takeProfit = entryPrice -(slDistance * riskRewardRatio);
+      
+   int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
+   takeProfit = NormalizeDouble(takeProfit, digits);
+   
    // 4. Calculate exactly 1% Risk Lot Size
    double lotSize = CalculateRiskLotSize(sym, entryPrice, stopLoss, 1.0);
    if(lotSize == 0) return;
@@ -1639,7 +1727,7 @@ void ExecuteAutomatedTrade(string sym, int tradeDirection,ENUM_TIMEFRAMES tfs = 
    req.type      = (ENUM_ORDER_TYPE)orderType;
    req.price     = entryPrice;
    req.sl        = stopLoss;
-   req.tp        = 0; 
+   req.tp        = takeProfit;
    req.deviation = 20;
    req.magic     = 7777; 
    req.comment   = "SentriX Auto Entry";
@@ -1689,15 +1777,15 @@ void ExecuteAutomatedTrade(string sym, int tradeDirection,ENUM_TIMEFRAMES tfs = 
    return 0.0;
 }*/
 
-double GetStructureStopLoss(string sym, ENUM_TIMEFRAMES tf, int tradeDirection, int bufferPoints = 20)
+/*double GetStructureStopLoss(string sym, ENUM_TIMEFRAMES tf, int tradeDirection, int bufferPoints = 20)
 {
    double point = SymbolInfoDouble(sym, SYMBOL_POINT);
    double bufferPriced = bufferPoints * point; 
    
    if(tradeDirection == 1) // BULLISH (BUY) - Find most recent Swing Low
    {
-      // Scan back up to 15 candles to find a true structural swing low (a "V" shape)
-      for(int i = 1; i <= 15; i++)
+      // Scan back up to 5 candles to find a true structural swing low (a "V" shape)
+      for(int i = 1; i <= 5; i++)
       {
          double currentLow = iLow(sym, tf, i);
          double prevLow    = iLow(sym, tf, i+1);
@@ -1713,12 +1801,12 @@ double GetStructureStopLoss(string sym, ENUM_TIMEFRAMES tf, int tradeDirection, 
       // Fallback: If no swing is found, use the lowest point of the 3-candle setup itself
       int lowestIndex = iLowest(sym, tf, MODE_LOW, 3, 1);
       if(lowestIndex < 0) lowestIndex = 1;
-      return iLow(sym, tf, lowestIndex) - bufferPriced;
+      return iLow(sym, tf, 1) - bufferPriced;
    }
    else if(tradeDirection == -1) // BEARISH (SELL) - Find most recent Swing High
    {
-      // Scan back up to 15 candles to find a true structural swing high (an inverted "V" shape)
-      for(int i = 1; i <= 15; i++)
+      // Scan back up to 5 candles to find a true structural swing high (an inverted "V" shape)
+      for(int i = 1; i <= 5; i++)
       {
          double currentHigh = iHigh(sym, tf, i);
          double prevHigh    = iHigh(sym, tf, i+1);
@@ -1734,12 +1822,55 @@ double GetStructureStopLoss(string sym, ENUM_TIMEFRAMES tf, int tradeDirection, 
       // Fallback: If no swing is found, use the highest point of the 3-candle setup itself
       int highestIndex = iHighest(sym, tf, MODE_HIGH, 3, 1);
       if(highestIndex < 0) highestIndex = 1;
-      return iHigh(sym, tf, highestIndex) + bufferPriced;
+      return iHigh(sym, tf, 1) + bufferPriced;
+   }
+   
+   return 0.0;
+}*/
+
+double GetStructureStopLoss(string sym, ENUM_TIMEFRAMES tf, int tradeDirection, double entryPrice, int lookbackCandles = 5, int bufferPoints = 20, int fallbackPoints = 30)
+{
+   double point = SymbolInfoDouble(sym, SYMBOL_POINT);
+   double bufferPriced = bufferPoints * point; 
+   double fallbackPriced = fallbackPoints * point; // The 30 points you requested
+   
+   if(tradeDirection == 1) // BULLISH (BUY)
+   {
+      int lowestIndex = iLowest(sym, tf, MODE_LOW, lookbackCandles, 1);
+      if(lowestIndex < 0) lowestIndex = 1;
+      double swingLow = iLow(sym, tf, lowestIndex);
+      
+      // If the 5-candle low is genuinely lower than our entry price, use it!
+      if(swingLow < entryPrice)
+      {
+         return swingLow - bufferPriced;
+      }
+      // If we bought at the absolute bottom, just set SL 30 points below our entry
+      else
+      {
+         return entryPrice - fallbackPriced;
+      }
+   }
+   else if(tradeDirection == -1) // BEARISH (SELL)
+   {
+      int highestIndex = iHighest(sym, tf, MODE_HIGH, lookbackCandles, 1);
+      if(highestIndex < 0) highestIndex = 1;
+      double swingHigh = iHigh(sym, tf, highestIndex);
+      
+      // If the 5-candle high is genuinely higher than our entry price, use it!
+      if(swingHigh > entryPrice)
+      {
+         return swingHigh + bufferPriced;
+      }
+      // If we sold at the absolute top, just set SL 30 points above our entry
+      else
+      {
+         return entryPrice + fallbackPriced;
+      }
    }
    
    return 0.0;
 }
-
 double CalculateRiskLotSize(string sym, double entryPrice, double stopLossPrice, double riskPercent = 1.0)
 {
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
@@ -1779,7 +1910,7 @@ void EnforceManualTradeRisk(ulong ticket, string sym, int tradeDirection)
    // 1. Calculate the Structure SL
    //double structureSL = GetStructureStopLoss(sym, PERIOD_CURRENT, tradeDirection, 10, 20);
    
-   double structureSL = GetStructureStopLoss(sym, PERIOD_CURRENT, tradeDirection, 20);
+   double structureSL = GetStructureStopLoss(sym, PERIOD_CURRENT, tradeDirection,openPrice,5, 20,30);
    if(structureSL == 0) return;
    
    // 2. Calculate the maximum allowed lot size for exactly 1% risk
@@ -1799,6 +1930,7 @@ void EnforceManualTradeRisk(ulong ticket, string sym, int tradeDirection)
       {
          Print(" SentriXrisk: Manual trade (", currentVol, " lots) exceeds 1% risk. Auto-closing ", excessVolume, " lots.");
          
+         Sleep(200);
          MqlTick tick;
          SymbolInfoTick(sym, tick);
          
@@ -1808,6 +1940,7 @@ void EnforceManualTradeRisk(ulong ticket, string sym, int tradeDirection)
          reqClose.position  = ticket;
          reqClose.symbol    = sym;
          reqClose.volume    = excessVolume;
+         reqClose.deviation = 20;
          int type = (int)PositionGetInteger(POSITION_TYPE);
          reqClose.type      = (type == POSITION_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
          reqClose.price     = (type == POSITION_TYPE_BUY) ? tick.bid : tick.ask;
@@ -1817,7 +1950,26 @@ void EnforceManualTradeRisk(ulong ticket, string sym, int tradeDirection)
          else if((filling & SYMBOL_FILLING_IOC) != 0) reqClose.type_filling = ORDER_FILLING_IOC;
          else                                         reqClose.type_filling = ORDER_FILLING_RETURN;
          
-         OrderSend(reqClose, resClose); // Instantly dump the excess risk!
+         if(OrderSend(reqClose, resClose))
+         {
+            Print("SentriXRisk : Successfully auto closed excess lots, Deal:" , resClose.deal);
+         }else
+            {
+             Print("Sentrix : Magic Slice failed Error", GetLastError(), "RetCode", resClose.retcode);
+            }
+      }
+      MqlTradeRequest reqMod = {};
+      MqlTradeResult resMod = {};
+      reqMod.action = TRADE_ACTION_SLTP;
+      reqMod.position = ticket;
+      reqMod.symbol = sym;
+      reqMod.sl = structureSL;
+      reqMod.tp = PositionGetDouble(POSITION_TP);
+      
+      if(OrderSend(reqMod,resMod))
+      {
+      
+            printf("SentriXrisk: Successfully enforced Structure Stop Loss at ", structureSL);
       }
    }
    
@@ -1832,7 +1984,329 @@ void EnforceManualTradeRisk(ulong ticket, string sym, int tradeDirection)
    
    if(OrderSend(reqMod, resMod))
    {
-      Print("️ SentriXrisk : Successfully enforced Structure Stop Loss at ", structureSL);
+      Print("? SentriXrisk : Successfully enforced Structure Stop Loss at ", structureSL);
    }
 }
 
+
+//UI chart events for button clicks
+
+void OnChartEvent(const int32_t id,const long& lparam,const double& dparam,const string& sparam)
+       {
+         if(id == CHARTEVENT_OBJECT_CLICK)
+         {
+            // Same-chart fast path. Every OTHER chart's buttons are caught by
+            // PollPanelClicksAcrossCharts() in OnTimer(), since OnChartEvent
+            // only ever fires for the chart this EA is physically attached to.
+            if(sparam == OBJ_BTN_BUY)
+            {
+               ObjectSetInteger(0, OBJ_BTN_BUY, OBJPROP_STATE,false);
+               ChartRedraw();
+               SentriXCustomBuy(0);
+            }
+            else if(sparam == OBJ_BTN_SELL)
+                   { 
+                     ObjectSetInteger(0, OBJ_BTN_SELL,OBJPROP_STATE,false);
+                     ChartRedraw();
+                     SentriXCustomSell(0);
+                   }
+            
+         }
+       }
+       
+       
+void SentriXCustomBuy(long chart_id)
+{
+   string sym = ChartSymbol(chart_id);
+   if(sym == "") sym = _Symbol;
+
+   if(!ValidateTradeBeforeExecution(1, sym))
+   {
+      // Ensure button does not remain stuck pressed down on failure
+      ObjectSetInteger(chart_id, OBJ_BTN_BUY, OBJPROP_STATE, false);
+      ChartRedraw(chart_id);
+      return;
+   }
+   
+   ExecutePanelTrade(chart_id, 1);
+}
+
+void SentriXCustomSell(long chart_id)
+{
+   string sym = ChartSymbol(chart_id);
+   if(sym == "") sym = _Symbol;
+
+   if(!ValidateTradeBeforeExecution(-1, sym))
+   {
+      // Ensure button does not remain stuck pressed down on failure
+      ObjectSetInteger(chart_id, OBJ_BTN_SELL, OBJPROP_STATE, false);
+      ChartRedraw(chart_id);
+      return;
+   }
+   
+   ExecutePanelTrade(chart_id, -1);
+}
+
+//+------------------------------------------------------------------+
+//| Executes a panel trade on whichever chart/symbol was clicked.    |
+//| Always uses the structural SL and sizes to exactly 1% risk.      |
+//+------------------------------------------------------------------+
+void ExecutePanelTrade(long chart_id, int tradeDirectrion)
+{
+   string sym = ChartSymbol(chart_id);
+   if(sym == "") return;
+
+   MqlTick tick;
+   if(!SymbolInfoTick(sym,tick))
+     {   
+      return;
+      
+     }
+     int digits = (int)SymbolInfoInteger(sym,SYMBOL_DIGITS);
+     
+    double entryPrice = NormalizeDouble((tradeDirectrion == 1) ? tick.ask :tick.bid,digits);
+    
+    double stopLoss = GetStructureStopLoss(sym, PERIOD_CURRENT, tradeDirectrion,entryPrice,5,20,30);
+    if(stopLoss == 0) return;
+    
+    stopLoss = NormalizeDouble(stopLoss,digits);
+    
+    double slDistance = MathAbs(entryPrice - stopLoss);
+    double takeProfit = 0;
+    double riskRewardRatio = 2.0; 
+    
+    if(tradeDirectrion == 1) 
+       takeProfit = entryPrice + (slDistance * riskRewardRatio);
+    else 
+       takeProfit = entryPrice - (slDistance * riskRewardRatio);
+    
+    double lotSize = CalculateRiskLotSize(sym, entryPrice, stopLoss, 1.0);
+    if(lotSize == 0) return;
+    
+    MqlTradeRequest req = {};
+    MqlTradeResult res = {};
+    
+    req.action = TRADE_ACTION_DEAL;
+    req.symbol = sym;
+    req.volume = lotSize;
+    req.type= (tradeDirectrion ==1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+    req.price = entryPrice;
+    req.sl = stopLoss;
+    req.deviation = 20;
+    req.magic = 9999;
+    req.comment = "SentriX Panel";
+    
+    
+    uint filling = (uint)SymbolInfoInteger(sym, SYMBOL_FILLING_MODE);
+    if((filling & SYMBOL_FILLING_FOK)!=0) req.type_filling = ORDER_FILLING_FOK;
+    else if((filling & SYMBOL_FILLING_IOC) != 0) req.type_filling = ORDER_FILLING_IOC;
+    else req.type_filling = ORDER_FILLING_RETURN;
+    
+    
+    if(OrderSend(req,res))
+    {
+      Print("SentriX Panel [", sym, "]: Sent order successfully.");
+    }
+    else
+      {
+         Print("SentriX Panel [", sym, "]: Order Error ", GetLastError());
+      }
+    
+}
+
+//+------------------------------------------------------------------+
+//| Draws the manual-entry panel on a specific chart (default:       |
+//| the chart this call originates from). Called once per chart by   |
+//| SyncPanelsAcrossCharts() so every open symbol chart gets its own  |
+//| independent set of panel objects (chart-scoped object names never|
+//| collide with each other).                                        |
+//+------------------------------------------------------------------+
+void CreatePanel(long chart_id = 0)
+{
+   DestroyPanel(chart_id);
+   int panel_width = 200, panel_height = 120, x_offset = 20, y_offset = 30;
+   
+   // FIX: Moved to the Top-Left to avoid the right-side price scale
+   ENUM_BASE_CORNER corner = CORNER_LEFT_UPPER;
+   
+   ObjectCreate(chart_id, OBJ_BG, OBJ_RECTANGLE_LABEL, 0, 0, 0);
+   ObjectSetInteger(chart_id, OBJ_BG, OBJPROP_CORNER, corner);
+   ObjectSetInteger(chart_id, OBJ_BG, OBJPROP_XDISTANCE, x_offset);
+   ObjectSetInteger(chart_id, OBJ_BG, OBJPROP_YDISTANCE, y_offset);
+   ObjectSetInteger(chart_id, OBJ_BG, OBJPROP_XSIZE, panel_width);
+   ObjectSetInteger(chart_id, OBJ_BG, OBJPROP_YSIZE, panel_height);
+   ObjectSetInteger(chart_id, OBJ_BG, OBJPROP_BGCOLOR, C'30,34,45'); 
+   ObjectSetInteger(chart_id, OBJ_BG, OBJPROP_BORDER_TYPE, BORDER_FLAT);
+   ObjectSetInteger(chart_id, OBJ_BG, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(chart_id, OBJ_BG, OBJPROP_HIDDEN, true); // Hides from the object list
+   
+   ObjectCreate(chart_id, OBJ_TITLE, OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(chart_id, OBJ_TITLE, OBJPROP_CORNER, corner);
+   ObjectSetInteger(chart_id, OBJ_TITLE, OBJPROP_XDISTANCE, x_offset + 10);
+   ObjectSetInteger(chart_id, OBJ_TITLE, OBJPROP_YDISTANCE, y_offset + 10);
+   ObjectSetString(chart_id, OBJ_TITLE, OBJPROP_TEXT, "SentriX Manual Entry");
+   ObjectSetString(chart_id, OBJ_TITLE, OBJPROP_FONT, "Segoe UI");
+   ObjectSetInteger(chart_id, OBJ_TITLE, OBJPROP_FONTSIZE, 10);
+   ObjectSetInteger(chart_id, OBJ_TITLE, OBJPROP_COLOR, clrWhite);
+   ObjectSetInteger(chart_id, OBJ_TITLE, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(chart_id, OBJ_TITLE, OBJPROP_HIDDEN, true);
+   
+   // FIX: SELL button is now correctly placed on the left side (Bid)
+   ObjectCreate(chart_id, OBJ_BTN_SELL, OBJ_BUTTON, 0, 0, 0);
+   ObjectSetInteger(chart_id, OBJ_BTN_SELL, OBJPROP_CORNER, corner);
+   ObjectSetInteger(chart_id, OBJ_BTN_SELL, OBJPROP_XDISTANCE, x_offset + 10);
+   ObjectSetInteger(chart_id, OBJ_BTN_SELL, OBJPROP_YDISTANCE, y_offset + 40);
+   ObjectSetInteger(chart_id, OBJ_BTN_SELL, OBJPROP_XSIZE, 85);
+   ObjectSetInteger(chart_id, OBJ_BTN_SELL, OBJPROP_YSIZE, 60);
+   ObjectSetString(chart_id, OBJ_BTN_SELL, OBJPROP_TEXT, "SELL");
+   ObjectSetString(chart_id, OBJ_BTN_SELL, OBJPROP_FONT, "Segoe UI Bold");
+   ObjectSetInteger(chart_id, OBJ_BTN_SELL, OBJPROP_FONTSIZE, 12);
+   ObjectSetInteger(chart_id, OBJ_BTN_SELL, OBJPROP_BGCOLOR, C'235,65,75'); 
+   ObjectSetInteger(chart_id, OBJ_BTN_SELL, OBJPROP_COLOR, clrWhite);
+   ObjectSetInteger(chart_id, OBJ_BTN_SELL, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(chart_id, OBJ_BTN_SELL, OBJPROP_HIDDEN, true);
+   
+   // FIX: BUY button is now correctly placed on the right side (Ask)
+   ObjectCreate(chart_id, OBJ_BTN_BUY, OBJ_BUTTON, 0, 0, 0);
+   ObjectSetInteger(chart_id, OBJ_BTN_BUY, OBJPROP_CORNER, corner);
+   ObjectSetInteger(chart_id, OBJ_BTN_BUY, OBJPROP_XDISTANCE, x_offset + 105);
+   ObjectSetInteger(chart_id, OBJ_BTN_BUY, OBJPROP_YDISTANCE, y_offset + 40);
+   ObjectSetInteger(chart_id, OBJ_BTN_BUY, OBJPROP_XSIZE, 85);
+   ObjectSetInteger(chart_id, OBJ_BTN_BUY, OBJPROP_YSIZE, 60);
+   ObjectSetString(chart_id, OBJ_BTN_BUY, OBJPROP_TEXT, "BUY");
+   ObjectSetString(chart_id, OBJ_BTN_BUY, OBJPROP_FONT, "Segoe UI Bold");
+   ObjectSetInteger(chart_id, OBJ_BTN_BUY, OBJPROP_FONTSIZE, 12);
+   ObjectSetInteger(chart_id, OBJ_BTN_BUY, OBJPROP_BGCOLOR, C'12,170,120'); 
+   ObjectSetInteger(chart_id, OBJ_BTN_BUY, OBJPROP_COLOR, clrWhite);
+   ObjectSetInteger(chart_id, OBJ_BTN_BUY, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(chart_id, OBJ_BTN_BUY, OBJPROP_HIDDEN, true);
+   
+   ChartRedraw(chart_id);
+}
+
+void DestroyPanel(long chart_id = 0)
+{
+   ObjectsDeleteAll(chart_id, PANEL_PREFIX);
+   ChartRedraw(chart_id);
+}
+
+void DestroyAllPanels()
+{
+   long chart_id = ChartFirst();
+   while(chart_id >= 0)
+   {
+      DestroyPanel(chart_id);
+      chart_id = ChartNext(chart_id);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Ensures every open chart (except the hidden service chart) has   |
+//| the manual-entry panel attached. Cheap to call every OnTimer()   |
+//| tick: ObjectFind() is used as a "does this chart already have    |
+//| one?" guard so existing panels (and whatever the user typed into |
+//| their edit boxes) are left untouched.                            |
+//+------------------------------------------------------------------+
+void SyncPanelsAcrossCharts()
+{
+   long chart_id = ChartFirst();
+   while(chart_id >= 0)
+   {
+      
+         if(ObjectFind(chart_id, OBJ_BTN_BUY) < 0)
+            CreatePanel(chart_id);
+      
+      chart_id = ChartNext(chart_id);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Polling mechanism (called from OnTimer). OnChartEvent only fires |
+//| for the chart this EA is attached to, so every OTHER open chart's|
+//| Buy/Sell button state has to be read explicitly. Any button found|
+//| pressed is reset to false immediately (so it can't double-fire   |
+//| or get stuck visually pressed) and the trade is executed on that |
+//| chart's own symbol.                                              |
+//+------------------------------------------------------------------+
+void PollPanelClicksAcrossCharts()
+{
+if(MQLInfoInteger(MQL_TESTER)) return;
+
+   long chart_id = ChartFirst();
+   while(chart_id >= 0)
+   {
+      // 1. Skip our own chart (OnChartEvent handles this natively and instantly)
+      if(chart_id == ChartID())
+      {
+         chart_id = ChartNext(chart_id);
+         continue;
+      }
+
+      // 2. Skip charts that already have their own SentriX EA attached!
+      // This prevents the EAs from colliding and throwing false alerts.
+      if(ChartGetString(chart_id, CHART_COMMENT) == "SENTRIX_BRIDGE_SERVICE")
+      {
+         chart_id = ChartNext(chart_id);
+         continue;
+      }
+
+      // 3. Process clicks only on empty charts that don't have an EA
+      if(ObjectFind(chart_id, OBJ_BTN_BUY) >= 0)
+      {
+         if(ObjectGetInteger(chart_id, OBJ_BTN_BUY, OBJPROP_STATE) == true)
+         {
+            ObjectSetInteger(chart_id, OBJ_BTN_BUY, OBJPROP_STATE, false);
+            ChartRedraw(chart_id);
+            Print("SentriX: Caught BUY click on chart ID ", chart_id, " (", ChartSymbol(chart_id), ")");
+            SentriXCustomBuy(chart_id);
+         }
+
+         if(ObjectGetInteger(chart_id, OBJ_BTN_SELL, OBJPROP_STATE) == true)
+         {
+            ObjectSetInteger(chart_id, OBJ_BTN_SELL, OBJPROP_STATE, false);
+            ChartRedraw(chart_id);
+            Print("SentriX: Caught SELL click on chart ID ", chart_id, " (", ChartSymbol(chart_id), ")");
+            SentriXCustomSell(chart_id);
+         }
+      }
+      
+      chart_id = ChartNext(chart_id);
+   }
+}
+
+
+bool ValidateTradeBeforeExecution(int direction, string sym)
+{
+   // --- 1. Check Session & Time Limits ---
+   bool timeWindowAllowed = IsCurrentTimeAllowedWindow();
+   bool violateSession    = !(g_SessionActive && timeWindowAllowed); 
+   bool violateDaily      = (g_MaxTradesDaily > 0 && g_CurrentDailyTrades >= g_MaxTradesDaily);
+   
+   string activeSession = GetActiveSession();
+   int sessionTrades = (activeSession == "London") ? g_TradesLondon : ((activeSession == "NewYork") ? g_TradesNewYork : 0);
+   bool violateSessionTrades = (g_MaxTradeSession > 0 && sessionTrades >= g_MaxTradeSession);
+
+   // --- 2. Check 3-Candle Pattern Rules ---
+   int sigM15 = CheckCandlePattern(sym, PERIOD_M15);
+   int sigM30 = CheckCandlePattern(sym, PERIOD_M30);
+   int sigH1  = CheckCandlePattern(sym, PERIOD_H1);
+   int sigH4  = CheckCandlePattern(sym, PERIOD_H4);
+
+   // Does ANY allowed timeframe have a setup matching the direction they clicked?
+   bool hasValidSetup = (sigM15 == direction || sigM30 == direction || sigH1 == direction || sigH4 == direction);
+
+   // --- 3. Evaluate Results ---
+   if(violateSession || violateDaily || violateSessionTrades || !hasValidSetup)
+   {
+      string reason = violateSession ? "Outside Allowed Session Time" : 
+                      (violateDaily ? "Daily Max Trades Reached" : 
+                      (violateSessionTrades ? "Session Max Trades Reached" : 
+                      "No Valid 3-Candle Pattern on M15, M30, H1, or H4"));
+      
+      // Fire an alert to the user explaining exactly why the panel won't let them trade
+      TriggerMT5Alert("SentriX Pre-Trade Block: " + reason);
+      return false; // ABORT: Do not call OrderSend!
+   }
+
+   return true; // PASSED: Safe to send to broker
+}

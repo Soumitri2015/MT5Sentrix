@@ -33,6 +33,8 @@ namespace Sentrix
 
         public static bool CloseTradesOutsideSession => Config.CloseTradesOutsideSession;
 
+        public static bool IsStrictCandle => Config.IsStrictCandle;
+
         public static Dictionary<string, List<TimeWindow>> TradingSessions => Config.TradingSessions;
 
         public static string TessDataPath =>

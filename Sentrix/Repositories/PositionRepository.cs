@@ -79,8 +79,13 @@ namespace Sentrix.Repositories
             {
                 await using var _context = await _contextFactory.CreateDbContextAsync();
                 DateTime today = DateTime.UtcNow.Date;
-                return await _context.Positions
-                    .Where(p => p.UserId == userId && p.CreatedUtc.Date == today)
+                DateTime tommorrowUtc = today.AddDays(1);
+                //return await _context.Positions
+                //    .Where(p => p.UserId == userId && p.CreatedUtc.Date == today)
+                //    .ToListAsync();
+
+                return await _context.Positions.AsNoTracking()
+                    .Where(p => p.UserId == userId && p.CreatedUtc >= today && p.CreatedUtc < tommorrowUtc)
                     .ToListAsync();
             }
             catch (Exception ex)
@@ -97,18 +102,25 @@ namespace Sentrix.Repositories
             {
                 await using var _context = await _contextFactory.CreateDbContextAsync();
                 DateTime today = DateTime.UtcNow.Date;
+                DateTime tommorow = today.AddDays(1);
 
-                return await _context.Positions
-                    .Where(p => p.UserId == userId && p.CreatedUtc.Date == today)
-                    .GroupBy(p => p.SessionName)
-                    .Select(g => new
-                    {
-                        Session = g.Key,
-                        Count = g.Select(p => p.Symbol + "|" + p.EntryPrice + "|" + p.CreatedUtc)
-                                 .Distinct()
-                                 .Count()
-                    })
-                    .ToDictionaryAsync(x => x.Session, x => x.Count);
+                var rawData = await _context.Positions.AsNoTracking().Where(p => p.UserId == userId && p.CreatedUtc >= today && p.CreatedUtc < tommorow).
+                                                                     Select(p => new { p.SessionName, p.Symbol, p.EntryPrice, p.CreatedUtc }).
+                                                                     ToListAsync();
+
+                return rawData.GroupBy(p => p.SessionName ?? p.SessionName ?? "Outside Allowed Session ").
+                               ToDictionary(g => g.Key, g => g.Select(p => $"{p.Symbol}|{p.EntryPrice}|{p.CreatedUtc:o}").Distinct().Count());
+                //return await _context.Positions
+                //    .Where(p => p.UserId == userId && p.CreatedUtc.Date == today)
+                //    .GroupBy(p => p.SessionName)
+                //    .Select(g => new
+                //    {
+                //        Session = g.Key,
+                //        Count = g.Select(p => p.Symbol + "|" + p.EntryPrice + "|" + p.CreatedUtc)
+                //                 .Distinct()
+                //                 .Count()
+                //    })
+                //    .ToDictionaryAsync(x => x.Session, x => x.Count);
             }
             catch (Exception ex)
             {

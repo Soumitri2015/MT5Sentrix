@@ -48,6 +48,9 @@ namespace Sentrix.Models
         [JsonPropertyName("MaxTradesPerSession")]
         public int MaxTradesPerSession { get; set; }
 
+        [JsonPropertyName("RequireVisibleBody")]
+        public bool RequireVisibleBody { get; set; }
+
 
     }
 }

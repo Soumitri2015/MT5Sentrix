@@ -43,9 +43,10 @@ namespace Sentrix.Repositories
                         UserID = userId,
                         MaxTradesPerDay = config.MaxTradesPerDay,
                         MaxTradesPerSession = config.MaxTradesPerSession,
-                        LossPercentValue = (double)config.LossPercentvalue,
+                        LossPercentValue = (double)config.LossPercentValue,
                         LockMessage = config.LockMessage,
                         CloseTradesOutsideSession = config.CloseTradesOutsideSession,
+                        IsStrictCandle = config.IsStrictCandle,
                         TradingSessions = new Dictionary<string, List<TimeWindow>>()
                     };
                 }
@@ -110,9 +111,10 @@ namespace Sentrix.Repositories
 
                 existingConfig.MaxTradesPerDay = config.MaxTradesPerDay;
                 existingConfig.MaxTradesPerSession = config.MaxTradesPerSession;
-                existingConfig.LossPercentvalue = (decimal)config.LossPercentValue;
+                existingConfig.LossPercentValue = (decimal)config.LossPercentValue;
                 existingConfig.LockMessage = config.LockMessage;
                 existingConfig.CloseTradesOutsideSession = config.CloseTradesOutsideSession;
+                existingConfig.IsStrictCandle = config.IsStrictCandle;
 
 
 
